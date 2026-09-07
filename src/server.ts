@@ -5,7 +5,8 @@ import { z } from "zod";
 import { loadConfig } from "./config.js";
 import { GoogleCalendarService } from "./google.js";
 import { EncryptedStore } from "./store.js";
-import { people, type DisplayMode, type DisplayTheme, type Person } from "./types.js";
+import { verifiedTelegramWebAppUserId } from "./telegram.js";
+import { people, type DisplayMode, type DisplayTheme } from "./types.js";
 import { saintPetersburgWeather } from "./weather.js";
 
 const config = loadConfig();
@@ -14,7 +15,17 @@ const calendars = new GoogleCalendarService(config, store);
 const app = Fastify({ logger: true, trustProxy: true });
 
 const displayModes = ["NOW", "TODAY", "WEEK", "MONTH"] as const;
-const displayThemes = ["forest", "stone", "tobacco", "taupe", "apple"] as const;
+const displayThemes = ["forest", "stone", "tobacco", "taupe", "apple", "gallery"] as const;
+
+app.addHook("onRequest", async (request, reply) => {
+  const origin = request.headers.origin;
+  if (origin !== config.MINI_APP_ORIGIN) return;
+  reply.header("Access-Control-Allow-Origin", origin);
+  reply.header("Access-Control-Allow-Headers", "content-type, x-telegram-init-data");
+  reply.header("Access-Control-Allow-Methods", "GET, PATCH, OPTIONS");
+  reply.header("Vary", "Origin");
+  if (request.method === "OPTIONS") return reply.code(204).send();
+});
 
 app.get("/health", async () => ({ ok: true, service: "dino-tv-backend", time: new Date().toISOString() }));
 
@@ -79,6 +90,36 @@ app.get("/v1/display/snapshot", async (request, reply) => {
   });
 });
 
+app.get("/v1/miniapp/state", async (request) => {
+  requireMiniAppUser(firstHeader(request.headers["x-telegram-init-data"]));
+  const state = store.read();
+  return {
+    display: state.display,
+    connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
+    weatherCity: "Санкт-Петербург",
+  };
+});
+
+app.patch("/v1/miniapp/display", async (request) => {
+  requireMiniAppUser(firstHeader(request.headers["x-telegram-init-data"]));
+  const body = z.object({
+    mode: z.enum(displayModes).optional(),
+    theme: z.enum(displayThemes).optional(),
+    privacy: z.boolean().optional(),
+    note: z.string().trim().min(1).max(180).optional(),
+    clearNote: z.boolean().optional(),
+  }).parse(request.body);
+  if (body.clearNote && body.note) throw Object.assign(new Error("Choose note or clearNote"), { statusCode: 400 });
+  const updated = store.update((state) => {
+    if (body.mode) state.display.mode = body.mode;
+    if (body.theme) state.display.theme = body.theme as DisplayTheme;
+    if (body.privacy !== undefined) state.display.privacy = body.privacy;
+    if (body.note) state.display.note = { text: body.note, expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() };
+    if (body.clearNote) state.display.note = undefined;
+  });
+  return { display: updated.display };
+});
+
 app.post("/v1/telegram/webhook", async (request, reply) => {
   const secret = request.headers["x-telegram-bot-api-secret-token"];
   if (secret !== config.TELEGRAM_WEBHOOK_SECRET) return reply.code(401).send({ ok: false });
@@ -109,44 +150,87 @@ function requireDevice(header: string | undefined): void {
   }
 }
 
-function handleTelegramCommand(text: string): string {
-  const [commandWithBot, ...argumentsList] = text.trim().split(/\s+/);
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function requireMiniAppUser(initData: string | undefined): void {
+  if (!config.TELEGRAM_BOT_TOKEN) throw Object.assign(new Error("Telegram Mini App is not configured"), { statusCode: 503 });
+  const userId = verifiedTelegramWebAppUserId(initData, config.TELEGRAM_BOT_TOKEN);
+  if (!userId) throw Object.assign(new Error("Invalid Telegram init data"), { statusCode: 401 });
+  if (!config.allowedTelegramUsers.has(String(userId))) {
+    throw Object.assign(new Error("Telegram user is not allowed"), { statusCode: 403 });
+  }
+}
+
+type TelegramReply = { text: string; openMiniApp?: boolean };
+
+const quickCommands: Record<string, string> = {
+  "🕰 Сейчас": "/now",
+  "☀️ Сегодня": "/today",
+  "🗓 Неделя": "/week",
+  "🌙 Месяц": "/month",
+  "🎨 Галерея": "/theme gallery",
+  "🙈 Гостевой режим": "/privacy on",
+  "📡 Статус": "/status",
+};
+
+function handleTelegramCommand(text: string): TelegramReply {
+  const normalizedText = quickCommands[text.trim()] ?? text.trim();
+  const [commandWithBot, ...argumentsList] = normalizedText.split(/\s+/);
   const command = commandWithBot.toLowerCase().split("@")[0];
   const argument = argumentsList.join(" ");
   const update = (mutator: Parameters<typeof store.update>[0]) => store.update(mutator);
   if (command === "/now" || command === "/today" || command === "/week" || command === "/month") {
     const mode = command.slice(1).toUpperCase() as DisplayMode;
     update((state) => { state.display.mode = mode; });
-    return `Экран: ${mode}.`;
+    const names: Record<DisplayMode, string> = { NOW: "«Сейчас»", TODAY: "«Сегодня»", WEEK: "«Неделя»", MONTH: "«Месяц»" };
+    return { text: `Готово — на экране ${names[mode]}. Всё обновится через несколько секунд.` };
   }
   if (command === "/theme") {
-    if (!(displayThemes as readonly string[]).includes(argument)) return "Тема: forest, stone, tobacco, taupe или apple.";
+    if (!(displayThemes as readonly string[]).includes(argument)) return { text: "Выберите тему: gallery, tobacco, taupe, stone, forest или apple." };
     update((state) => { state.display.theme = argument as DisplayTheme; });
-    return `Тема: ${argument}.`;
+    return { text: `Тема «${argument}» уже на телевизоре. Очень идёт вашему интерьеру.` };
   }
   if (command === "/privacy") {
-    if (argument !== "on" && argument !== "off") return "Использование: /privacy on или /privacy off";
+    if (argument !== "on" && argument !== "off") return { text: "Напишите /privacy on, чтобы скрыть дела, или /privacy off, чтобы вернуть их." };
     update((state) => { state.display.privacy = argument === "on"; });
-    return argument === "on" ? "Гостевой режим включён." : "Гостевой режим выключен.";
+    return { text: argument === "on" ? "Гостевой режим включён — на экране остались время и погода." : "Гостевой режим выключен — календарь снова виден." };
   }
   if (command === "/note") {
-    if (!argument) return "Использование: /note текст заметки";
+    if (!argument) return { text: "Напишите /note и текст — я покажу его на телевизоре на один час." };
     update((state) => { state.display.note = { text: argument.slice(0, 180), expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() }; });
-    return "Заметка показана на один час.";
+    return { text: "Готово — заметка появилась на телевизоре и исчезнет через час." };
   }
   if (command === "/status") {
     const connected = store.read().oauth;
-    return `Календари: Миша — ${connected.misha ? "подключён" : "не подключён"}; Наташа — ${connected.natasha ? "подключён" : "не подключён"}.`;
+    return { text: `Календари: Миша — ${connected.misha ? "подключён" : "ещё не подключён"}; Наташа — ${connected.natasha ? "подключён" : "ещё не подключён"}.` };
   }
-  return "Команды: /now, /today, /week, /month, /theme, /privacy, /note, /status";
+  if (command === "/home" || command === "/start") return { text: "Рад видеть. Откройте домашнюю консоль — там все настройки экрана в одном красивом месте.", openMiniApp: true };
+  return { text: "Я рядом. Выберите действие кнопкой ниже или напишите /home, /today, /week, /month, /theme, /privacy, /note либо /status." };
 }
 
-async function replyToTelegram(chatId: number, text: string): Promise<void> {
+async function replyToTelegram(chatId: number, reply: TelegramReply): Promise<void> {
   if (!config.TELEGRAM_BOT_TOKEN) return;
+  const replyMarkup: Record<string, unknown> = {
+    keyboard: [
+      [{ text: "🏠 Открыть Dino TV", web_app: { url: config.TELEGRAM_WEB_APP_URL } }],
+      [{ text: "🕰 Сейчас" }, { text: "☀️ Сегодня" }],
+      [{ text: "🗓 Неделя" }, { text: "🌙 Месяц" }],
+      [{ text: "🎨 Галерея" }, { text: "🙈 Гостевой режим" }],
+      [{ text: "📡 Статус" }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+    input_field_placeholder: "Или напишите команду…",
+  };
+  if (reply.openMiniApp) {
+    replyMarkup.inline_keyboard = [[{ text: "Открыть Dino TV", web_app: { url: config.TELEGRAM_WEB_APP_URL } }]];
+  }
   const response = await fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text }),
+    body: JSON.stringify({ chat_id: chatId, text: reply.text, reply_markup: replyMarkup }),
   });
   if (!response.ok) app.log.warn({ status: response.status }, "Telegram reply failed");
 }

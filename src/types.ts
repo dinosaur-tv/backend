@@ -2,7 +2,7 @@ export const people = ["misha", "natasha"] as const;
 export type Person = (typeof people)[number];
 
 export type DisplayMode = "NOW" | "TODAY" | "WEEK" | "MONTH";
-export type DisplayTheme = "forest" | "stone" | "tobacco" | "taupe" | "apple";
+export type DisplayTheme = "forest" | "stone" | "tobacco" | "taupe" | "apple" | "gallery";
 
 export interface OAuthConnection {
   refreshToken: string;
@@ -32,4 +32,3 @@ export interface SnapshotEvent {
   color: string;
   allDay: boolean;
 }
-

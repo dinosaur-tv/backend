@@ -34,4 +34,3 @@ export async function saintPetersburgWeather() {
 }
 
 const timezone = "Europe/Moscow";
-

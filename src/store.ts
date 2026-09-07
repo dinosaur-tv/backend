@@ -59,4 +59,3 @@ export class EncryptedStore {
     writeFileSync(this.filePath, JSON.stringify(payload), { mode: 0o600 });
   }
 }
-

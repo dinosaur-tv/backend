@@ -2,4 +2,3 @@
     encode zstd gzip
     reverse_proxy dino-backend:3000
 }
-
