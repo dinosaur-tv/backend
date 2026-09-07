@@ -1,28 +1,34 @@
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { setDefaultResultOrder } from "node:dns";
 import { join } from "node:path";
 import Fastify from "fastify";
 import { z } from "zod";
+import { handleTelegramCommand } from "./commands.js";
 import { loadConfig } from "./config.js";
 import { GoogleCalendarService } from "./google.js";
+import { BackgroundStore, MediaError } from "./media.js";
+import { PairingDesk } from "./pairing.js";
 import { EncryptedStore } from "./store.js";
 import { verifiedTelegramWebAppUserId } from "./telegram.js";
-import { people, type DisplayMode, type DisplayTheme } from "./types.js";
-import { saintPetersburgWeather } from "./weather.js";
+import { displayModes, displayThemes, people, type DisplayTheme } from "./types.js";
+import { fallbackWeather, saintPetersburgWeather } from "./weather.js";
+
+setDefaultResultOrder("ipv4first");
 
 const config = loadConfig();
-const store = new EncryptedStore(join(process.cwd(), "data", "state.enc"), config.TOKEN_ENCRYPTION_KEY);
+const dataDir = join(process.cwd(), "data");
+const store = new EncryptedStore(join(dataDir, "state.enc"), config.TOKEN_ENCRYPTION_KEY);
+const backgrounds = new BackgroundStore(join(dataDir, "backgrounds"));
 const calendars = new GoogleCalendarService(config, store);
-const app = Fastify({ logger: true, trustProxy: true });
-
-const displayModes = ["NOW", "TODAY", "WEEK", "MONTH"] as const;
-const displayThemes = ["forest", "stone", "tobacco", "taupe", "apple", "gallery"] as const;
+const pairing = new PairingDesk();
+const app = Fastify({ logger: true, trustProxy: true, bodyLimit: 4_000_000 });
 
 app.addHook("onRequest", async (request, reply) => {
   const origin = request.headers.origin;
   if (origin !== config.MINI_APP_ORIGIN) return;
   reply.header("Access-Control-Allow-Origin", origin);
-  reply.header("Access-Control-Allow-Headers", "content-type, x-telegram-init-data");
-  reply.header("Access-Control-Allow-Methods", "GET, PATCH, OPTIONS");
+  reply.header("Access-Control-Allow-Headers", "content-type, authorization, x-telegram-init-data");
+  reply.header("Access-Control-Allow-Methods", "GET, PATCH, POST, OPTIONS");
   reply.header("Vary", "Origin");
   if (request.method === "OPTIONS") return reply.code(204).send();
 });
@@ -32,7 +38,7 @@ app.get("/health", async () => ({ ok: true, service: "dino-tv-backend", time: ne
 app.get("/", async (_, reply) => reply.type("text/html").send(publicPage("Dino TV", `
   <p class="eyebrow">Private household display</p>
   <h1>Ваш дом —<br>в одном красивом экране.</h1>
-  <p class="lead">Dino TV показывает время, погоду Санкт-Петербурга, общий ритм двух календарей и текущую музыку на телевизоре.</p>
+  <p class="lead">Dino TV показывает время, погоду Санкт-Петербурга, общий ритм двух календарей и настроение гостиной.</p>
   <p class="note">Это частное приложение для одного дома, не публичный сервис.</p>
 `)));
 
@@ -41,7 +47,7 @@ app.get("/privacy", async (_, reply) => reply.type("text/html").send(publicPage(
   <h1>Политика<br>конфиденциальности</h1>
   <p class="lead">Обновлено 7 сентября 2026 года.</p>
   <h2>Какие данные использует Dino TV</h2>
-  <p>Приложение получает только события Google Calendar, к которым каждый владелец аккаунта дал явное разрешение: название, время и календарь события. Для экрана также запрашивается публичный прогноз погоды Санкт-Петербурга.</p>
+  <p>Приложение получает только события Google Calendar, к которым каждый владелец аккаунта дал явное разрешение: название, время и календарь события. Для экрана также запрашивается публичный прогноз погоды Санкт-Петербурга. Фон экрана загружает только человек из дома.</p>
   <h2>Зачем</h2>
   <p>Данные используются исключительно для показа домашнего расписания на телевизоре и выполнения команд авторизованных участников через Telegram.</p>
   <h2>Хранение и защита</h2>
@@ -55,7 +61,7 @@ app.get("/terms", async (_, reply) => reply.type("text/html").send(publicPage("�
   <h1>Условия<br>использования</h1>
   <p class="lead">Обновлено 7 сентября 2026 года.</p>
   <h2>Назначение</h2>
-  <p>Dino TV — приватное домашнее приложение для отображения времени, погоды, событий календаря и информации о воспроизведении музыки на Android TV.</p>
+  <p>Dino TV — приватное домашнее приложение для отображения времени, погоды, событий календаря и выбранного фона на экране в гостиной.</p>
   <h2>Учётные записи</h2>
   <p>Каждый пользователь сам подключает свой Google Calendar и может в любой момент отозвать доступ. Владелец домашнего сервера отвечает за сохранность доступа к нему, настройку Telegram-бота и список людей, которым разрешено управление.</p>
   <h2>Ограничения</h2>
@@ -76,27 +82,61 @@ app.get("/oauth/google/callback", async (request, reply) => {
 });
 
 app.get("/v1/display/snapshot", async (request, reply) => {
-  requireDevice(request.headers.authorization);
-  const [weather, events] = await Promise.all([saintPetersburgWeather(), calendars.eventsForNextMonth()]);
+  requireDisplayAccess(request.headers.authorization);
+  const [weatherResult, eventsResult] = await Promise.allSettled([
+    saintPetersburgWeather(),
+    calendars.eventsForNextMonth(),
+  ]);
+  if (weatherResult.status === "rejected") app.log.warn({ err: weatherResult.reason }, "weather fetch failed");
+  if (eventsResult.status === "rejected") app.log.warn({ err: eventsResult.reason }, "calendar fetch failed");
   const state = store.read();
   const note = state.display.note && new Date(state.display.note.expiresAt) > new Date() ? state.display.note : undefined;
   return reply.send({
     generatedAt: new Date().toISOString(),
     timezone: "Europe/Moscow",
-    weather,
-    days: groupByDay(events),
-    display: { ...state.display, note },
+    weather: weatherResult.status === "fulfilled" ? weatherResult.value : fallbackWeather(),
+    days: groupByDay(eventsResult.status === "fulfilled" ? eventsResult.value : []),
+    display: {
+      ...state.display,
+      note,
+      backgroundUrl: state.display.background ? `${config.PUBLIC_BASE_URL}/v1/media/background/${state.display.background.id}` : undefined,
+    },
     connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
+    tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
   });
+});
+
+app.post("/v1/display/pair/start", async () => {
+  const started = pairing.start();
+  return { pairId: started.pairId, code: started.code, expiresIn: 600 };
+});
+
+app.get("/v1/display/pair/wait", async (request) => {
+  const query = z.object({ pairId: z.string().min(8) }).parse(request.query);
+  return pairing.status(query.pairId);
+});
+
+app.get("/v1/media/background/:id", async (request, reply) => {
+  const params = z.object({ id: z.string().min(8) }).parse(request.params);
+  const file = backgrounds.read(params.id);
+  if (!file) return reply.code(404).send({ error: "Not found" });
+  return reply
+    .header("Cache-Control", "public, max-age=31536000, immutable")
+    .type(file.mime)
+    .send(file.buffer);
 });
 
 app.get("/v1/miniapp/state", async (request) => {
   requireMiniAppUser(firstHeader(request.headers["x-telegram-init-data"]));
   const state = store.read();
   return {
-    display: state.display,
+    display: {
+      ...state.display,
+      backgroundUrl: state.display.background ? `${config.PUBLIC_BASE_URL}/v1/media/background/${state.display.background.id}` : undefined,
+    },
     connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
     weatherCity: "Санкт-Петербург",
+    tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
   };
 });
 
@@ -108,6 +148,7 @@ app.patch("/v1/miniapp/display", async (request) => {
     privacy: z.boolean().optional(),
     note: z.string().trim().min(1).max(180).optional(),
     clearNote: z.boolean().optional(),
+    clearBackground: z.boolean().optional(),
   }).parse(request.body);
   if (body.clearNote && body.note) throw Object.assign(new Error("Choose note or clearNote"), { statusCode: 400 });
   const updated = store.update((state) => {
@@ -116,8 +157,37 @@ app.patch("/v1/miniapp/display", async (request) => {
     if (body.privacy !== undefined) state.display.privacy = body.privacy;
     if (body.note) state.display.note = { text: body.note, expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() };
     if (body.clearNote) state.display.note = undefined;
+    if (body.clearBackground) {
+      backgrounds.remove(state.display.background?.id);
+      state.display.background = undefined;
+    }
   });
   return { display: updated.display };
+});
+
+app.post("/v1/miniapp/background", async (request) => {
+  requireMiniAppUser(firstHeader(request.headers["x-telegram-init-data"]));
+  const body = z.object({ image: z.string().min(32) }).parse(request.body);
+  const saved = backgrounds.save(body.image);
+  const updated = store.update((state) => {
+    backgrounds.remove(state.display.background?.id);
+    state.display.background = saved;
+  });
+  return {
+    display: {
+      ...updated.display,
+      backgroundUrl: `${config.PUBLIC_BASE_URL}/v1/media/background/${saved.id}`,
+    },
+  };
+});
+
+app.post("/v1/miniapp/pair/approve", async (request) => {
+  requireMiniAppUser(firstHeader(request.headers["x-telegram-init-data"]));
+  const body = z.object({ code: z.string().regex(/^\d{6}$/) }).parse(request.body);
+  if (!pairing.approve(body.code, store.tvSession())) {
+    throw Object.assign(new Error("Не нашёл такой код. Проверьте цифры на телевизоре."), { statusCode: 404 });
+  }
+  return { ok: true };
 });
 
 app.post("/v1/telegram/webhook", async (request, reply) => {
@@ -134,20 +204,28 @@ app.post("/v1/telegram/webhook", async (request, reply) => {
   if (!message?.text || !message.from || !config.allowedTelegramUsers.has(String(message.from.id))) {
     return reply.send({ ok: true });
   }
-  const response = handleTelegramCommand(message.text);
-  await replyToTelegram(message.chat.id, response);
+  const connected = store.read().oauth;
+  const response = handleTelegramCommand(message.text, (mutator) => store.update(mutator), {
+    misha: Boolean(connected.misha),
+    natasha: Boolean(connected.natasha),
+  });
+  try {
+    await replyToTelegram(message.chat.id, response);
+  } catch (error) {
+    app.log.warn({ err: error }, "Telegram reply failed");
+  }
   return reply.send({ ok: true });
 });
 
-function requireDevice(header: string | undefined): void {
+function requireDisplayAccess(header: string | undefined): void {
   const token = header?.startsWith("Bearer ") ? header.slice(7) : "";
-  const received = createHash("sha256").update(token).digest("hex");
-  const expected = createHash("sha256").update(config.DEVICE_TOKEN).digest("hex");
-  if (received !== expected) {
-    const error = new Error("Unauthorized");
-    Object.assign(error, { statusCode: 401 });
-    throw error;
-  }
+  const candidates = [config.DEVICE_TOKEN, store.tvSession()].filter(Boolean);
+  const received = createHash("sha256").update(token).digest();
+  const allowed = candidates.some((candidate) => {
+    const expected = createHash("sha256").update(candidate).digest();
+    return received.length === expected.length && timingSafeEqual(received, expected);
+  });
+  if (!allowed) throw Object.assign(new Error("Unauthorized"), { statusCode: 401 });
 }
 
 function firstHeader(value: string | string[] | undefined): string | undefined {
@@ -163,67 +241,9 @@ function requireMiniAppUser(initData: string | undefined): void {
   }
 }
 
-type TelegramReply = { text: string; openMiniApp?: boolean };
-
-const quickCommands: Record<string, string> = {
-  "🕰 Сейчас": "/now",
-  "☀️ Сегодня": "/today",
-  "🗓 Неделя": "/week",
-  "🌙 Месяц": "/month",
-  "🎨 Галерея": "/theme gallery",
-  "🙈 Гостевой режим": "/privacy on",
-  "📡 Статус": "/status",
-};
-
-function handleTelegramCommand(text: string): TelegramReply {
-  const normalizedText = quickCommands[text.trim()] ?? text.trim();
-  const [commandWithBot, ...argumentsList] = normalizedText.split(/\s+/);
-  const command = commandWithBot.toLowerCase().split("@")[0];
-  const argument = argumentsList.join(" ");
-  const update = (mutator: Parameters<typeof store.update>[0]) => store.update(mutator);
-  if (command === "/now" || command === "/today" || command === "/week" || command === "/month") {
-    const mode = command.slice(1).toUpperCase() as DisplayMode;
-    update((state) => { state.display.mode = mode; });
-    const names: Record<DisplayMode, string> = { NOW: "«Сейчас»", TODAY: "«Сегодня»", WEEK: "«Неделя»", MONTH: "«Месяц»" };
-    return { text: `Готово — на экране ${names[mode]}. Всё обновится через несколько секунд.` };
-  }
-  if (command === "/theme") {
-    if (!(displayThemes as readonly string[]).includes(argument)) return { text: "Выберите тему: gallery, tobacco, taupe, stone, forest или apple." };
-    update((state) => { state.display.theme = argument as DisplayTheme; });
-    return { text: `Тема «${argument}» уже на телевизоре. Очень идёт вашему интерьеру.` };
-  }
-  if (command === "/privacy") {
-    if (argument !== "on" && argument !== "off") return { text: "Напишите /privacy on, чтобы скрыть дела, или /privacy off, чтобы вернуть их." };
-    update((state) => { state.display.privacy = argument === "on"; });
-    return { text: argument === "on" ? "Гостевой режим включён — на экране остались время и погода." : "Гостевой режим выключен — календарь снова виден." };
-  }
-  if (command === "/note") {
-    if (!argument) return { text: "Напишите /note и текст — я покажу его на телевизоре на один час." };
-    update((state) => { state.display.note = { text: argument.slice(0, 180), expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() }; });
-    return { text: "Готово — заметка появилась на телевизоре и исчезнет через час." };
-  }
-  if (command === "/status") {
-    const connected = store.read().oauth;
-    return { text: `Календари: Миша — ${connected.misha ? "подключён" : "ещё не подключён"}; Наташа — ${connected.natasha ? "подключён" : "ещё не подключён"}.` };
-  }
-  if (command === "/home" || command === "/start") return { text: "Рад видеть. Откройте домашнюю консоль — там все настройки экрана в одном красивом месте.", openMiniApp: true };
-  return { text: "Я рядом. Выберите действие кнопкой ниже или напишите /home, /today, /week, /month, /theme, /privacy, /note либо /status." };
-}
-
-async function replyToTelegram(chatId: number, reply: TelegramReply): Promise<void> {
+async function replyToTelegram(chatId: number, reply: { text: string; openMiniApp?: boolean }): Promise<void> {
   if (!config.TELEGRAM_BOT_TOKEN) return;
-  const replyMarkup: Record<string, unknown> = {
-    keyboard: [
-      [{ text: "🏠 Открыть Dino TV", web_app: { url: config.TELEGRAM_WEB_APP_URL } }],
-      [{ text: "🕰 Сейчас" }, { text: "☀️ Сегодня" }],
-      [{ text: "🗓 Неделя" }, { text: "🌙 Месяц" }],
-      [{ text: "🎨 Галерея" }, { text: "🙈 Гостевой режим" }],
-      [{ text: "📡 Статус" }],
-    ],
-    resize_keyboard: true,
-    is_persistent: true,
-    input_field_placeholder: "Или напишите команду…",
-  };
+  const replyMarkup: Record<string, unknown> = { remove_keyboard: true };
   if (reply.openMiniApp) {
     replyMarkup.inline_keyboard = [[{ text: "Открыть Dino TV", web_app: { url: config.TELEGRAM_WEB_APP_URL } }]];
   }
@@ -231,6 +251,7 @@ async function replyToTelegram(chatId: number, reply: TelegramReply): Promise<vo
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ chat_id: chatId, text: reply.text, reply_markup: replyMarkup }),
+    signal: AbortSignal.timeout(12_000),
   });
   if (!response.ok) app.log.warn({ status: response.status }, "Telegram reply failed");
 }
@@ -247,6 +268,7 @@ function groupByDay(events: Awaited<ReturnType<typeof calendars.eventsForNextMon
 function publicPage(title: string, content: string): string {
   return `<!doctype html>
   <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/png" href="${config.MINI_APP_ORIGIN}/assets/dino-icon-512.png">
   <meta name="theme-color" content="#171815"><title>${title} · Dino TV</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -263,7 +285,7 @@ function publicPage(title: string, content: string): string {
 
 app.setErrorHandler((error, _, reply) => {
   app.log.error(error);
-  const statusCode = (error as { statusCode?: number }).statusCode ?? 500;
+  const statusCode = error instanceof MediaError ? error.statusCode : (error as { statusCode?: number }).statusCode ?? 500;
   const message = error instanceof Error ? error.message : "Internal server error";
   reply.code(statusCode).send({ error: message });
 });

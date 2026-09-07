@@ -51,6 +51,7 @@ export class GoogleCalendarService {
   }
 
   async eventsForNextMonth(): Promise<SnapshotEvent[]> {
+    if (!this.isConfigured()) return [];
     const state = this.store.read();
     const beginning = new Date();
     beginning.setHours(0, 0, 0, 0);
@@ -61,36 +62,40 @@ export class GoogleCalendarService {
       (Object.keys(personInfo) as Person[]).map(async (person) => {
         const connection = state.oauth[person];
         if (!connection) return [];
-        const client = this.client();
-        client.setCredentials({ refresh_token: connection.refreshToken });
-        const calendar = google.calendar({ version: "v3", auth: client });
-        const ids = connection.calendarIds.length ? connection.calendarIds : ["primary"];
-        const calendars = await Promise.all(ids.map(async (calendarId) => {
-          const response = await calendar.events.list({
-            calendarId,
-            timeMin: beginning.toISOString(),
-            timeMax: ending.toISOString(),
-            singleEvents: true,
-            orderBy: "startTime",
-            timeZone: timezone,
+        try {
+          const client = this.client();
+          client.setCredentials({ refresh_token: connection.refreshToken });
+          const calendar = google.calendar({ version: "v3", auth: client });
+          const ids = connection.calendarIds.length ? connection.calendarIds : ["primary"];
+          const calendars = await Promise.all(ids.map(async (calendarId) => {
+            const response = await calendar.events.list({
+              calendarId,
+              timeMin: beginning.toISOString(),
+              timeMax: ending.toISOString(),
+              singleEvents: true,
+              orderBy: "startTime",
+              timeZone: timezone,
+            });
+            return response.data.items ?? [];
+          }));
+          return calendars.flat().flatMap((event): SnapshotEvent[] => {
+            const start = event.start?.dateTime ?? event.start?.date;
+            const end = event.end?.dateTime ?? event.end?.date;
+            if (!start || !end) return [];
+            return [{
+              id: `${person}:${event.id ?? randomBytes(6).toString("hex")}`,
+              title: event.summary?.trim() || "Без названия",
+              start,
+              end,
+              calendarName: personInfo[person].label,
+              ownerName: personInfo[person].label,
+              color: personInfo[person].color,
+              allDay: Boolean(event.start?.date),
+            }];
           });
-          return response.data.items ?? [];
-        }));
-        return calendars.flat().flatMap((event): SnapshotEvent[] => {
-          const start = event.start?.dateTime ?? event.start?.date;
-          const end = event.end?.dateTime ?? event.end?.date;
-          if (!start || !end) return [];
-          return [{
-            id: `${person}:${event.id ?? randomBytes(6).toString("hex")}`,
-            title: event.summary?.trim() || "Без названия",
-            start,
-            end,
-            calendarName: personInfo[person].label,
-            ownerName: personInfo[person].label,
-            color: personInfo[person].color,
-            allDay: Boolean(event.start?.date),
-          }];
-        });
+        } catch {
+          return [];
+        }
       }),
     );
     return groups.flat().sort((a, b) => a.start.localeCompare(b.start));

@@ -4,3 +4,6 @@ dist/
 data/
 .dino-qa-deploy
 .dino-qa-deploy.pub
+*.log
+scripts/_tmp_*
+.DS_Store

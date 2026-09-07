@@ -5,7 +5,7 @@ import type { StoredState } from "./types.js";
 
 const emptyState = (): StoredState => ({
   oauth: {},
-  display: { mode: "NOW", theme: "forest", privacy: false },
+  display: { mode: "NOW", theme: "gallery", privacy: false },
 });
 
 interface CipherPayload {
@@ -28,6 +28,14 @@ export class EncryptedStore {
     return structuredClone(this.state);
   }
 
+  tvSession(): string {
+    if (!this.state.tvSession) {
+      this.state.tvSession = randomBytes(24).toString("base64url");
+      this.persist();
+    }
+    return this.state.tvSession;
+  }
+
   update(mutator: (state: StoredState) => void): StoredState {
     mutator(this.state);
     this.persist();
@@ -43,7 +51,10 @@ export class EncryptedStore {
       decipher.update(Buffer.from(payload.ciphertext, "base64")),
       decipher.final(),
     ]);
-    return JSON.parse(plaintext.toString("utf8")) as StoredState;
+    const parsed = JSON.parse(plaintext.toString("utf8")) as StoredState;
+    if (String(parsed.display?.mode) === "MONTH") parsed.display.mode = "WEEK";
+    if (!parsed.display?.theme) parsed.display.theme = "gallery";
+    return parsed;
   }
 
   private persist(): void {
