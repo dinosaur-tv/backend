@@ -7,8 +7,9 @@ const configSchema = z.object({
   TOKEN_ENCRYPTION_KEY: z.string().min(1),
   DEVICE_TOKEN: z.string().min(32),
   OAUTH_CONNECT_TOKEN: z.string().min(32),
-  GOOGLE_CLIENT_ID: z.string().min(1),
-  GOOGLE_CLIENT_SECRET: z.string().min(1),
+  // The dashboard can start before Calendar OAuth is configured.
+  GOOGLE_CLIENT_ID: z.string().optional().transform((value) => value?.trim() || undefined),
+  GOOGLE_CLIENT_SECRET: z.string().optional().transform((value) => value?.trim() || undefined),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(16),
   TELEGRAM_ALLOWED_USER_IDS: z.string().default(""),

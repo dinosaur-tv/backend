@@ -52,6 +52,7 @@ app.get("/terms", async (_, reply) => reply.type("text/html").send(publicPage("Ð
 `)));
 
 app.get("/oauth/google/start", async (request, reply) => {
+  if (!calendars.isConfigured()) return reply.code(503).send("Google Calendar OAuth is not configured yet");
   const query = z.object({ person: z.enum(people), key: z.string().min(32) }).parse(request.query);
   if (query.key !== config.OAUTH_CONNECT_TOKEN) return reply.code(401).send("Unauthorized");
   return reply.redirect(calendars.authorizationUrl(query.person));

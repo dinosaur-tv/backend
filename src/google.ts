@@ -21,6 +21,10 @@ export class GoogleCalendarService {
     private readonly store: EncryptedStore,
   ) {}
 
+  isConfigured(): boolean {
+    return Boolean(this.config.GOOGLE_CLIENT_ID && this.config.GOOGLE_CLIENT_SECRET);
+  }
+
   authorizationUrl(person: Person): string {
     const client = this.client();
     return client.generateAuthUrl({
@@ -93,6 +97,9 @@ export class GoogleCalendarService {
   }
 
   private client() {
+    if (!this.config.GOOGLE_CLIENT_ID || !this.config.GOOGLE_CLIENT_SECRET) {
+      throw new Error("Google Calendar OAuth is not configured yet");
+    }
     return new google.auth.OAuth2(
       this.config.GOOGLE_CLIENT_ID,
       this.config.GOOGLE_CLIENT_SECRET,
@@ -124,4 +131,3 @@ export class GoogleCalendarService {
     return createHmac("sha256", this.config.TOKEN_ENCRYPTION_KEY).update(payload).digest("base64url");
   }
 }
-
