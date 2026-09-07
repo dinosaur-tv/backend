@@ -1,62 +1,108 @@
-# Dino TV private service
+# Dino TV backend
 
-Это контракт бэкенда, который рекомендуется развернуть в домашней сети, на Cloud Run/Fly.io или VPS. Его задача — быть единственным владельцем секретов. Android TV получает только экранные данные и команды, разрешённые для этого устройства.
+Приватный сервис для одного дома: подключает Google Calendar Миши и Наташи, получает погоду Санкт-Петербурга, принимает команды Telegram и отдаёт телевизору защищённый снимок данных. Разворачивается на небольшом VPS в Docker.
 
-## Обязательные сущности
+## До первого запуска
 
-- **user** — владелец Google-аккаунта;
-- **household** — пара/дом и его часовой пояс;
-- **device** — конкретный телевизор с отзываемым ключом;
-- **calendar connection** — зашифрованный OAuth refresh token и список разрешённых календарей;
-- **telegram allowlist** — только Telegram `user_id`, а не username;
-- **display command** — команда с TTL, например `SET_MODE: WEEK` или `SET_THEME: TAUPE`.
+- VPS с Ubuntu 24.04+ и публичным IPv4;
+- домен или поддомен, например `api.dym-dino.ru`, с A-записью на IP VPS;
+- открытые TCP-порты `80` и `443`;
+- Docker Engine и Docker Compose plugin на VPS;
+- Telegram bot token из @BotFather.
 
-## HTTP API для телевизора
+Caddy сам выпустит и обновит HTTPS-сертификат, когда DNS уже будет указывать на VPS.
 
-Все запросы только по HTTPS. После первичной привязки телевизор передаёт `Authorization: Bearer <device-session>`.
+## Ссылки для Google Auth Platform
 
-### `GET /v1/display/snapshot`
+После публикации с `API_DOMAIN=api.dym-dino.ru` пропишите в Google Auth Platform → Branding:
 
-Возвращает несырые данные Google, а подготовленный снимок на 30 дней:
+| Поле | Значение |
+| --- | --- |
+| Application home page | `https://api.dym-dino.ru/` |
+| Application privacy policy link | `https://api.dym-dino.ru/privacy` |
+| Application terms of service link | `https://api.dym-dino.ru/terms` |
 
-```json
-{
-  "generatedAt": "2026-09-07T17:34:00+03:00",
-  "weather": { "temperature": 18, "feelsLike": 17, "description": "Переменная облачность", "high": 20, "low": 11, "location": "Москва" },
-  "days": [{
-    "date": "2026-09-07",
-    "events": [{ "id": "opaque-id", "title": "Ужин дома", "start": "2026-09-07T20:30:00+03:00", "end": "2026-09-07T22:00:00+03:00", "calendarName": "Общее", "color": "#D18182" }]
-  }]
-}
+Это три общедоступные страницы Dino TV: они не требуют авторизации и не показывают персональные данные.
+
+## Развёртывание
+
+Для VPS с уже работающим Traefik используйте `docker-compose.traefik.yml`: он не открывает порты сам, а подключает Dino TV к существующей reverse-proxy сети. Имя этой Docker-сети задаётся в `TRAEFIK_NETWORK` (на целевом сервере — `proxy`). В случае с самостоятельным сервером без Traefik оставьте исходный `docker-compose.yml` — он использует Caddy.
+
+Загрузите на VPS **только эту папку `backend/`**, затем создайте отдельного пользователя для развёртывания. Установите Docker, подготовьте свой SSH-ключ и один раз под root выполните:
+
+```bash
+sudo bash scripts/provision-dino-user.sh 'ssh-ed25519 ВАШ_ПУБЛИЧНЫЙ_КЛЮЧ dino-tv'
 ```
 
-### `GET /v1/devices/{id}/commands`
+В новом терминале проверьте, что вход под `dino-d` и `sudo` работают. Только после успешной проверки закройте root-вход и парольную авторизацию:
 
-Длинный polling или WebSocket для команд. Команды должны иметь UUID, время истечения и подпись сервера. Телевизор подтверждает обработку через `POST /v1/commands/{id}/ack`.
+```bash
+sudo bash scripts/lock-root-ssh.sh
+```
 
-## Telegram bot
+Дальше уже под `dino-d`:
 
-Webhook обязан проверять секретный заголовок Telegram и затем проверять `from.id` по allowlist household. Команды:
+```bash
+cd backend
+cp .env.example .env
+nano .env
+docker compose -f docker-compose.traefik.yml up -d --build
+docker compose -f docker-compose.traefik.yml logs -f dino-backend
+```
 
-- `/now`, `/today`, `/week`, `/month` — сменить экран;
-- `/night on|off` — ночной режим;
-- `/theme forest|stone|tobacco|taupe|apple` — сменить палитру экрана;
-- `/refresh` — внеочередная синхронизация;
-- `/note <текст>` — временная заметка на телевизор, ограниченная TTL;
-- `/privacy on|off` — скрыть названия личных событий в гостевом режиме.
+Проверьте `https://ваш-домен/health`. Секреты лежат только в `.env`, который исключён из git. OAuth refresh tokens находятся в `data/state.enc` и зашифрованы AES-256-GCM ключом `TOKEN_ENCRYPTION_KEY`. Перед запуском создайте в Cloudflare DNS A-запись `api.dym-dino.ru` на VPS и включите proxied-режим.
 
-Ответы бота не должны показывать OAuth-токены, device key или полное содержимое личного календаря.
+Конфигурация Traefik использует стандартные labels `Host(API_DOMAIN)`, `websecure`, TLS и внутренний порт `3000`. До запуска убедитесь, что имя внешней Docker-сети в `.env` действительно совпадает с сетью работающего Traefik; это единственное значение, зависящее от уже настроенных проектов на VPS.
+
+Для `TOKEN_ENCRYPTION_KEY`, `DEVICE_TOKEN`, `OAUTH_CONNECT_TOKEN` и `TELEGRAM_WEBHOOK_SECRET` используйте `openssl rand -base64 32` или менеджер паролей. Не отправляйте их в чат.
 
 ## Google Calendar
 
-Для каждого аккаунта требуется отдельное согласие OAuth 2.0 c минимальным scope `calendar.events.readonly`. После подключения пользователь выбирает, какие календари выводить. Все-day события нормализуются в часовом поясе household; повторяющиеся события следует разворачивать на сервере, а не на ТВ.
+Calendar API в проекте уже включён. Дальше:
 
-Каждому подключению назначается постоянный владелец и цвет (например, **Миша — янтарный**, **Наташа — шалфейный**). В каждом событии снимка обязательно передаются `calendarName`, `ownerName` и `color`; телевизор показывает цветную точку и имя владельца рядом со временем. Так личное дело не выглядит как общее.
+1. Google Auth Platform → **Data Access** → Add or remove scopes:
+   - `https://www.googleapis.com/auth/calendar.events.readonly`
+   - `https://www.googleapis.com/auth/calendar.calendarlist.readonly`
+2. Google Auth Platform → **Clients**: удалите старый `TV and Limited Input` client.
+3. Create client → **Web application**.
+4. В Authorized redirect URIs добавьте:
 
-## Безопасность
+   ```text
+   https://api.example.com/oauth/google/callback
+   ```
 
-- refresh tokens шифруются ключом KMS/secret manager;
-- device session можно отозвать из админки;
-- Telegram токен, Google client secret и device session никогда не кладутся в репозиторий или APK;
-- логи редактируют название и описание событий;
-- rate limit для Telegram и endpoint устройства обязателен.
+   где `api.example.com` — `API_DOMAIN` из `.env`.
+5. Впишите новый Client ID и Client Secret в `.env` на VPS. Не добавляйте их в Android-приложение.
+
+После запуска откройте на личном устройстве:
+
+```text
+https://api.example.com/oauth/google/start?person=misha&key=OAUTH_CONNECT_TOKEN
+https://api.example.com/oauth/google/start?person=natasha&key=OAUTH_CONNECT_TOKEN
+```
+
+Замените `OAUTH_CONNECT_TOKEN` значением из `.env`; не публикуйте эти ссылки. Каждый входит в свой Google-аккаунт. Если нужны не primary-календари, в `.env` укажите их ID через запятую в `MISHA_CALENDAR_IDS` или `NATASHA_CALENDAR_IDS`.
+
+## Telegram
+
+1. Создайте бота в @BotFather и внесите token в `TELEGRAM_BOT_TOKEN`.
+2. В `TELEGRAM_ALLOWED_USER_IDS` внесите числовые Telegram user ID Миши и Наташи.
+3. После запуска установите webhook:
+
+```bash
+curl -F "url=https://api.example.com/v1/telegram/webhook" \
+     -F "secret_token=$TELEGRAM_WEBHOOK_SECRET" \
+     "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook"
+```
+
+Или, после заполнения `.env`, выполните без вывода токенов:
+
+```bash
+bash scripts/set-telegram-webhook.sh
+```
+
+Команды: `/now`, `/today`, `/week`, `/month`, `/theme forest|stone|tobacco|taupe|apple`, `/privacy on|off`, `/note текст`, `/status`.
+
+## API для телевизора
+
+`GET /v1/display/snapshot` требует `Authorization: Bearer <DEVICE_TOKEN>` и возвращает погоду Петербурга, события на 31 день, владельца/цвет каждого события, выбранную тему и команды Telegram. Подключение endpoint к Android-приложению — следующий шаг после первого успешного запуска VPS.

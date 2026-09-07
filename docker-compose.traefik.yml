@@ -1,0 +1,25 @@
+services:
+  dino-backend:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    networks:
+      - dino
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK:-proxy}
+      - traefik.http.routers.dino-tv-api.rule=Host(`${API_DOMAIN}`)
+      - traefik.http.routers.dino-tv-api.entrypoints=websecure
+      - traefik.http.routers.dino-tv-api.tls=true
+      - traefik.http.routers.dino-tv-api.tls.certresolver=letsencrypt
+      - traefik.http.routers.dino-tv-api.priority=10
+      - traefik.http.services.dino-tv-api.loadbalancer.server.port=3000
+
+networks:
+  dino:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:-proxy}
