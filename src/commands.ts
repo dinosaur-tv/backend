@@ -38,7 +38,7 @@ export function handleTelegramCommand(
   }
   if (command === "/theme") {
     if (!(displayThemes as readonly string[]).includes(argument)) {
-      return { text: "Выберите тему: gallery, tobacco, taupe, stone, forest или apple. Или откройте консоль — там это красивее." };
+      return { text: "Выберите тему: gallery, tobacco, taupe, stone, forest, apple, night или play. Или откройте консоль — там это красивее." };
     }
     update((state) => { state.display.theme = argument as DisplayTheme; });
     return { text: `Тема «${argument}» уже едет на телевизор. Очень идёт вашей гостиной.` };

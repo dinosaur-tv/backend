@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { periodsFromHourly, pickClosestHour, upcomingHours } from "./weather.js";
+import { periodsFromHourly, pickClosestHour, upcomingHours, weekDaysFromForecast } from "./weather.js";
 
 const hourly = {
   time: [
@@ -39,4 +39,16 @@ test("keeps the next few hours for the weather strip", () => {
   const hours = upcomingHours(hourly, new Date("2026-09-07T12:30:00Z"), 3);
   assert.ok(hours.length <= 3);
   assert.ok(hours.every((item) => item.time.startsWith("2026-09-07")));
+});
+
+test("builds a week of highs, lows and daytime weather", () => {
+  const days = weekDaysFromForecast({
+    time: ["2026-09-07", "2026-09-08"],
+    high: [16, 14],
+    low: [8, 7],
+    codes: [0, 61],
+  }, hourly);
+  assert.equal(days[0].description, "Ясно");
+  assert.equal(days[1].high, 14);
+  assert.equal(days[0].periods[0].label, "Утро");
 });

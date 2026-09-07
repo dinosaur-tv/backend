@@ -136,6 +136,7 @@ app.get("/v1/miniapp/state", async (request) => {
     },
     connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
     weatherCity: "Санкт-Петербург",
+    tvLinked: Boolean(state.tvLinked),
     tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
   };
 });
@@ -162,7 +163,12 @@ app.patch("/v1/miniapp/display", async (request) => {
       state.display.background = undefined;
     }
   });
-  return { display: updated.display };
+  return {
+    display: {
+      ...updated.display,
+      backgroundUrl: updated.display.background ? `${config.PUBLIC_BASE_URL}/v1/media/background/${updated.display.background.id}` : undefined,
+    },
+  };
 });
 
 app.post("/v1/miniapp/background", async (request) => {
@@ -187,6 +193,7 @@ app.post("/v1/miniapp/pair/approve", async (request) => {
   if (!pairing.approve(body.code, store.tvSession())) {
     throw Object.assign(new Error("Не нашёл такой код. Проверьте цифры на телевизоре."), { statusCode: 404 });
   }
+  store.update((state) => { state.tvLinked = true; });
   return { ok: true };
 });
 

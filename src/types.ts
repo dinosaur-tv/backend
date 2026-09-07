@@ -4,7 +4,7 @@ export type Person = (typeof people)[number];
 export const displayModes = ["NOW", "TODAY", "WEEK"] as const;
 export type DisplayMode = (typeof displayModes)[number];
 
-export const displayThemes = ["forest", "stone", "tobacco", "taupe", "apple", "gallery"] as const;
+export const displayThemes = ["forest", "stone", "tobacco", "taupe", "apple", "gallery", "night", "play"] as const;
 export type DisplayTheme = (typeof displayThemes)[number];
 
 export interface OAuthConnection {
@@ -35,6 +35,7 @@ export interface StoredState {
   oauth: Partial<Record<Person, OAuthConnection>>;
   display: DisplaySettings;
   tvSession?: string;
+  tvLinked?: boolean;
 }
 
 export interface SnapshotEvent {
@@ -63,6 +64,14 @@ export interface WeatherHour {
   description: string;
 }
 
+export interface WeatherDay {
+  date: string;
+  high: number;
+  low: number;
+  description: string;
+  periods: WeatherPeriod[];
+}
+
 export interface WeatherSnapshot {
   temperature: number;
   feelsLike: number;
@@ -72,4 +81,5 @@ export interface WeatherSnapshot {
   location: string;
   periods: WeatherPeriod[];
   hours: WeatherHour[];
+  days: WeatherDay[];
 }

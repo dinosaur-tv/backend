@@ -54,6 +54,7 @@ export class EncryptedStore {
     const parsed = JSON.parse(plaintext.toString("utf8")) as StoredState;
     if (String(parsed.display?.mode) === "MONTH") parsed.display.mode = "WEEK";
     if (!parsed.display?.theme) parsed.display.theme = "gallery";
+    if (parsed.tvLinked === undefined) parsed.tvLinked = Boolean(parsed.tvSession);
     return parsed;
   }
 

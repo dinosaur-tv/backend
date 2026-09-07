@@ -1,4 +1,4 @@
-import type { WeatherHour, WeatherPeriod, WeatherSnapshot } from "./types.js";
+import type { WeatherDay, WeatherHour, WeatherPeriod, WeatherSnapshot } from "./types.js";
 
 const timezone = "Europe/Moscow";
 
@@ -19,7 +19,12 @@ export const weatherPeriods = [
 
 interface OpenMeteoResponse {
   current?: { temperature_2m?: number; apparent_temperature?: number; weather_code?: number };
-  daily?: { temperature_2m_max?: number[]; temperature_2m_min?: number[] };
+  daily?: {
+    time?: string[];
+    temperature_2m_max?: number[];
+    temperature_2m_min?: number[];
+    weather_code?: number[];
+  };
   hourly?: { time?: string[]; temperature_2m?: number[]; weather_code?: number[] };
 }
 
@@ -89,6 +94,19 @@ export function upcomingHours(
     .map(({ at: _at, ...item }) => item);
 }
 
+export function weekDaysFromForecast(
+  daily: { time: string[]; high: number[]; low: number[]; codes: number[] },
+  hourly: { time: string[]; temperature: number[]; codes: number[] },
+): WeatherDay[] {
+  return daily.time.slice(0, 7).map((date, index) => ({
+    date,
+    high: Math.round(daily.high[index] ?? 0),
+    low: Math.round(daily.low[index] ?? 0),
+    description: describeWeather(daily.codes[index]),
+    periods: periodsFromHourly(hourly, date),
+  }));
+}
+
 export function fallbackWeather(): WeatherSnapshot {
   return {
     temperature: 0,
@@ -99,6 +117,7 @@ export function fallbackWeather(): WeatherSnapshot {
     location: "Санкт-Петербург",
     periods: [],
     hours: [],
+    days: [],
   };
 }
 
@@ -109,8 +128,8 @@ export async function saintPetersburgWeather(now = new Date()): Promise<WeatherS
     longitude: "30.3141",
     current: "temperature_2m,apparent_temperature,weather_code",
     hourly: "temperature_2m,weather_code",
-    daily: "temperature_2m_max,temperature_2m_min",
-    forecast_days: "2",
+    daily: "temperature_2m_max,temperature_2m_min,weather_code",
+    forecast_days: "8",
     timezone,
   }).toString();
   const response = await fetch(url, { signal: AbortSignal.timeout(8_000) });
@@ -131,5 +150,11 @@ export async function saintPetersburgWeather(now = new Date()): Promise<WeatherS
     location: "Санкт-Петербург",
     periods: periodsFromHourly(hourly, day),
     hours: upcomingHours(hourly, now),
+    days: weekDaysFromForecast({
+      time: data.daily?.time ?? [],
+      high: data.daily?.temperature_2m_max ?? [],
+      low: data.daily?.temperature_2m_min ?? [],
+      codes: data.daily?.weather_code ?? [],
+    }, hourly),
   };
 }
