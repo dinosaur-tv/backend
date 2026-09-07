@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 set -a
 source ./.env
 set +a
-: "${TELEGRAM_WEB_APP_URL:=https://home.dym-dino.ru}"
+: "${TELEGRAM_WEB_APP_URL:=https://home.dym-dino.ru/console/}"
 
 curl --fail-with-body --silent --show-error \
   --form "url=${PUBLIC_BASE_URL}/v1/telegram/webhook" \

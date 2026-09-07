@@ -14,7 +14,7 @@ const configSchema = z.object({
   TELEGRAM_WEBHOOK_SECRET: z.string().min(16),
   TELEGRAM_ALLOWED_USER_IDS: z.string().default(""),
   MINI_APP_ORIGIN: z.string().url().default("https://home.dym-dino.ru"),
-  TELEGRAM_WEB_APP_URL: z.string().url().default("https://home.dym-dino.ru"),
+  TELEGRAM_WEB_APP_URL: z.string().url().default("https://home.dym-dino.ru/console/"),
   MISHA_CALENDAR_IDS: z.string().default(""),
   NATASHA_CALENDAR_IDS: z.string().default(""),
 });
