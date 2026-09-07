@@ -10,7 +10,8 @@ import { BackgroundStore, MediaError } from "./media.js";
 import { PairingDesk } from "./pairing.js";
 import { EncryptedStore } from "./store.js";
 import { verifiedTelegramWebAppUserId } from "./telegram.js";
-import { displayModes, displayMoods, displayThemes, people, type DisplayMood, type DisplayTheme, type SnapshotEvent, type WeatherSnapshot } from "./types.js";
+import { displayModes, displayMoods, displayThemes, liveNote, noteDurationsMin, noteExpiresAt, parseNoteMinutes, people, type DisplayMood, type DisplayTheme, type SnapshotEvent, type WeatherSnapshot } from "./types.js";
+import { MusicDesk, musicActions } from "./music.js";
 import { fallbackWeather, saintPetersburgWeather } from "./weather.js";
 
 setDefaultResultOrder("ipv4first");
@@ -21,6 +22,7 @@ const store = new EncryptedStore(join(dataDir, "state.enc"), config.TOKEN_ENCRYP
 const backgrounds = new BackgroundStore(join(dataDir, "backgrounds"));
 const calendars = new GoogleCalendarService(config, store);
 const pairing = new PairingDesk();
+const music = new MusicDesk(config.YANDEX_MUSIC_TOKEN);
 const app = Fastify({ logger: true, trustProxy: true, bodyLimit: 4_000_000 });
 const feedTtlMs = 45_000;
 let cachedWeather: WeatherSnapshot = fallbackWeather();
@@ -111,7 +113,7 @@ app.get("/v1/display/snapshot", async (request, reply) => {
   requireDisplayAccess(request.headers.authorization);
   await livingRoomFeed();
   const state = store.read();
-  const note = state.display.note && new Date(state.display.note.expiresAt) > new Date() ? state.display.note : undefined;
+  const note = liveNote(state.display.note);
   return reply.header("Cache-Control", "no-store").send({
     generatedAt: new Date().toISOString(),
     timezone: "Europe/Moscow",
@@ -123,6 +125,8 @@ app.get("/v1/display/snapshot", async (request, reply) => {
       backgroundUrl: state.display.background ? `${config.PUBLIC_BASE_URL}/v1/media/background/${state.display.background.id}` : undefined,
     },
     reloadAt: state.tvReloadAt,
+    nowPlaying: music.snapshot().nowPlaying,
+    music: { connected: music.snapshot().connected },
     connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
     tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
   });
@@ -154,12 +158,15 @@ app.get("/v1/miniapp/state", async (request) => {
   return {
     display: {
       ...state.display,
+      note: liveNote(state.display.note),
       backgroundUrl: state.display.background ? `${config.PUBLIC_BASE_URL}/v1/media/background/${state.display.background.id}` : undefined,
     },
     connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
     weatherCity: "Санкт-Петербург",
     tvLinked: Boolean(state.tvLinked),
     tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
+    nowPlaying: music.snapshot().nowPlaying,
+    music: { connected: music.snapshot().connected },
   };
 });
 
@@ -171,6 +178,7 @@ app.patch("/v1/miniapp/display", async (request) => {
     mood: z.enum(displayMoods).optional(),
     privacy: z.boolean().optional(),
     note: z.string().trim().min(1).max(180).optional(),
+    noteMinutes: z.number().int().refine((value) => (noteDurationsMin as readonly number[]).includes(value)).optional(),
     clearNote: z.boolean().optional(),
     clearBackground: z.boolean().optional(),
     reloadTv: z.boolean().optional(),
@@ -186,7 +194,9 @@ app.patch("/v1/miniapp/display", async (request) => {
     }
     if (body.mood) state.display.mood = body.mood as DisplayMood;
     if (body.privacy !== undefined) state.display.privacy = body.privacy;
-    if (body.note) state.display.note = { text: body.note, expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() };
+    if (body.note) {
+      state.display.note = { text: body.note, expiresAt: noteExpiresAt(parseNoteMinutes(body.noteMinutes)) };
+    }
     if (body.clearNote) state.display.note = undefined;
     if (body.clearBackground) {
       backgrounds.remove(state.display.background?.id);
@@ -197,8 +207,24 @@ app.patch("/v1/miniapp/display", async (request) => {
   return {
     display: {
       ...updated.display,
+      note: liveNote(updated.display.note),
       backgroundUrl: updated.display.background ? `${config.PUBLIC_BASE_URL}/v1/media/background/${updated.display.background.id}` : undefined,
     },
+    nowPlaying: music.snapshot().nowPlaying,
+    music: { connected: music.snapshot().connected },
+  };
+});
+
+app.post("/v1/miniapp/music", async (request) => {
+  requireMiniAppUser(firstHeader(request.headers["x-telegram-init-data"]));
+  const body = z.object({
+    action: z.enum(musicActions),
+    volume: z.number().min(0).max(100).optional(),
+  }).parse(request.body);
+  const result = await music.command(body.action, body.volume);
+  return {
+    nowPlaying: result.nowPlaying,
+    music: { connected: result.connected },
   };
 });
 

@@ -54,6 +54,9 @@ export class EncryptedStore {
     const parsed = JSON.parse(plaintext.toString("utf8")) as StoredState;
     if (String(parsed.display?.mode) === "MONTH") parsed.display.mode = "WEEK";
     if (!parsed.display?.theme) parsed.display.theme = "gallery";
+    if (["stone", "tobacco", "taupe", "apple"].includes(String(parsed.display.theme))) {
+      parsed.display.theme = "gallery";
+    }
     if (parsed.display.theme === "night" || parsed.display.theme === "play") {
       parsed.display.mood = parsed.display.theme;
       parsed.display.theme = "gallery";

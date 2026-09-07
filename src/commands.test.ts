@@ -38,6 +38,17 @@ test("puts night and play on their own mood, not the color theme", () => {
   assert.match(reply.text, /шалость/i);
 });
 
+test("switches to a fully designed environment scene", () => {
+  const state = blankState();
+  const reply = handleTelegramCommand("/theme mountains", (mutator) => {
+    mutator(state);
+    return state;
+  }, { misha: true, natasha: true });
+  assert.equal(state.display.theme, "mountains");
+  assert.equal(state.display.mood, "home");
+  assert.match(reply.text, /Горы/);
+});
+
 test("opens the mini app from start without a bottom keyboard payload", () => {
   const reply = handleTelegramCommand("/start", (mutator) => {
     mutator(blankState());

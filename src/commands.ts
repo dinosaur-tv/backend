@@ -38,18 +38,25 @@ export function handleTelegramCommand(
   }
   if (command === "/theme") {
     if (!(displayThemes as readonly string[]).includes(argument) && argument !== "home") {
-      return { text: "Цвет: gallery, tobacco, taupe, stone, forest или apple. Ночь и шалость — отдельные режимы: /theme night и /theme play." };
+      return { text: "Сцены: gallery, night, play, forest, mountains, sea или space. Например: /theme sea." };
     }
     if (argument === "night" || argument === "play" || argument === "home") {
       update((state) => { state.display.mood = argument as DisplayMood; });
-      const names = { home: "обычный дом", night: "ночь", play: "шалость" };
+      const names = { home: "галерея", night: "ночь", play: "шалость" };
       return { text: `На экране режим «${names[argument]}».` };
     }
     update((state) => {
       state.display.theme = argument as DisplayTheme;
       state.display.mood = "home";
     });
-    return { text: `Тема «${argument}» уже едет на телевизор. Очень идёт вашей гостиной.` };
+    const names: Partial<Record<DisplayTheme, string>> = {
+      gallery: "Галерея",
+      forest: "Лес",
+      mountains: "Горы",
+      sea: "Море",
+      space: "Космос",
+    };
+    return { text: `Сцена «${names[argument as DisplayTheme] ?? argument}» уже оживает на телевизоре.` };
   }
   if (command === "/privacy") {
     if (argument !== "on" && argument !== "off") {

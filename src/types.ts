@@ -4,7 +4,9 @@ export type Person = (typeof people)[number];
 export const displayModes = ["NOW", "TODAY", "WEEK"] as const;
 export type DisplayMode = (typeof displayModes)[number];
 
-export const displayThemes = ["forest", "stone", "tobacco", "taupe", "apple", "gallery", "night", "play"] as const;
+export const displayThemes = [
+  "gallery", "night", "play", "forest", "mountains", "sea", "space",
+] as const;
 export type DisplayTheme = (typeof displayThemes)[number];
 
 export const displayMoods = ["home", "night", "play"] as const;
@@ -19,6 +21,25 @@ export interface OAuthConnection {
 export interface DisplayNote {
   text: string;
   expiresAt: string;
+}
+
+export const noteDurationsMin = [5, 10, 15, 30, 45, 60, 120, 240, 360, 720] as const;
+export type NoteMinutes = (typeof noteDurationsMin)[number];
+
+export function parseNoteMinutes(value?: number): NoteMinutes {
+  if (value === undefined) return 60;
+  if ((noteDurationsMin as readonly number[]).includes(value)) return value as NoteMinutes;
+  throw Object.assign(new Error("Выберите, сколько держать заметку"), { statusCode: 400 });
+}
+
+export function noteExpiresAt(minutes: NoteMinutes, now = Date.now()) {
+  return new Date(now + minutes * 60 * 1000).toISOString();
+}
+
+export function liveNote(note: DisplayNote | undefined, now = Date.now()) {
+  if (!note?.text) return undefined;
+  if (new Date(note.expiresAt).getTime() <= now) return undefined;
+  return note;
 }
 
 export interface DisplayBackground {
@@ -87,4 +108,14 @@ export interface WeatherSnapshot {
   periods: WeatherPeriod[];
   hours: WeatherHour[];
   days: WeatherDay[];
+}
+
+export interface NowPlaying {
+  title: string;
+  artist: string;
+  source: string;
+  isPlaying: boolean;
+  volumePercent: number;
+  artworkUrl?: string;
+  deviceName?: string;
 }
