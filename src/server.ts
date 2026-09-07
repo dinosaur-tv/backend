@@ -10,7 +10,7 @@ import { BackgroundStore, MediaError } from "./media.js";
 import { PairingDesk } from "./pairing.js";
 import { EncryptedStore } from "./store.js";
 import { verifiedTelegramWebAppUserId } from "./telegram.js";
-import { displayModes, displayThemes, people, type DisplayTheme } from "./types.js";
+import { displayModes, displayMoods, displayThemes, people, type DisplayMood, type DisplayTheme, type SnapshotEvent, type WeatherSnapshot } from "./types.js";
 import { fallbackWeather, saintPetersburgWeather } from "./weather.js";
 
 setDefaultResultOrder("ipv4first");
@@ -22,6 +22,32 @@ const backgrounds = new BackgroundStore(join(dataDir, "backgrounds"));
 const calendars = new GoogleCalendarService(config, store);
 const pairing = new PairingDesk();
 const app = Fastify({ logger: true, trustProxy: true, bodyLimit: 4_000_000 });
+const feedTtlMs = 45_000;
+let cachedWeather: WeatherSnapshot = fallbackWeather();
+let cachedEvents: SnapshotEvent[] = [];
+let feedUpdatedAt = 0;
+let feedRefresh: Promise<void> | null = null;
+
+async function refreshLivingRoomFeed(): Promise<void> {
+  if (feedRefresh) return feedRefresh;
+  feedRefresh = (async () => {
+    const [weatherResult, eventsResult] = await Promise.allSettled([
+      saintPetersburgWeather(),
+      calendars.eventsForNextMonth(),
+    ]);
+    if (weatherResult.status === "rejected") app.log.warn({ err: weatherResult.reason }, "weather fetch failed");
+    else cachedWeather = weatherResult.value;
+    if (eventsResult.status === "rejected") app.log.warn({ err: eventsResult.reason }, "calendar fetch failed");
+    else cachedEvents = eventsResult.value;
+    feedUpdatedAt = Date.now();
+  })().finally(() => { feedRefresh = null; });
+  return feedRefresh;
+}
+
+async function livingRoomFeed(): Promise<void> {
+  if (!feedUpdatedAt) await refreshLivingRoomFeed();
+  else if (Date.now() - feedUpdatedAt > feedTtlMs) void refreshLivingRoomFeed();
+}
 
 app.addHook("onRequest", async (request, reply) => {
   const origin = request.headers.origin;
@@ -83,24 +109,20 @@ app.get("/oauth/google/callback", async (request, reply) => {
 
 app.get("/v1/display/snapshot", async (request, reply) => {
   requireDisplayAccess(request.headers.authorization);
-  const [weatherResult, eventsResult] = await Promise.allSettled([
-    saintPetersburgWeather(),
-    calendars.eventsForNextMonth(),
-  ]);
-  if (weatherResult.status === "rejected") app.log.warn({ err: weatherResult.reason }, "weather fetch failed");
-  if (eventsResult.status === "rejected") app.log.warn({ err: eventsResult.reason }, "calendar fetch failed");
+  await livingRoomFeed();
   const state = store.read();
   const note = state.display.note && new Date(state.display.note.expiresAt) > new Date() ? state.display.note : undefined;
-  return reply.send({
+  return reply.header("Cache-Control", "no-store").send({
     generatedAt: new Date().toISOString(),
     timezone: "Europe/Moscow",
-    weather: weatherResult.status === "fulfilled" ? weatherResult.value : fallbackWeather(),
-    days: groupByDay(eventsResult.status === "fulfilled" ? eventsResult.value : []),
+    weather: cachedWeather,
+    days: groupByDay(cachedEvents),
     display: {
       ...state.display,
       note,
       backgroundUrl: state.display.background ? `${config.PUBLIC_BASE_URL}/v1/media/background/${state.display.background.id}` : undefined,
     },
+    reloadAt: state.tvReloadAt,
     connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
     tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
   });
@@ -146,15 +168,23 @@ app.patch("/v1/miniapp/display", async (request) => {
   const body = z.object({
     mode: z.enum(displayModes).optional(),
     theme: z.enum(displayThemes).optional(),
+    mood: z.enum(displayMoods).optional(),
     privacy: z.boolean().optional(),
     note: z.string().trim().min(1).max(180).optional(),
     clearNote: z.boolean().optional(),
     clearBackground: z.boolean().optional(),
+    reloadTv: z.boolean().optional(),
   }).parse(request.body);
   if (body.clearNote && body.note) throw Object.assign(new Error("Choose note or clearNote"), { statusCode: 400 });
   const updated = store.update((state) => {
     if (body.mode) state.display.mode = body.mode;
-    if (body.theme) state.display.theme = body.theme as DisplayTheme;
+    if (body.theme === "night" || body.theme === "play") {
+      state.display.mood = body.theme;
+    } else if (body.theme) {
+      state.display.theme = body.theme as DisplayTheme;
+      state.display.mood = "home";
+    }
+    if (body.mood) state.display.mood = body.mood as DisplayMood;
     if (body.privacy !== undefined) state.display.privacy = body.privacy;
     if (body.note) state.display.note = { text: body.note, expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() };
     if (body.clearNote) state.display.note = undefined;
@@ -162,6 +192,7 @@ app.patch("/v1/miniapp/display", async (request) => {
       backgrounds.remove(state.display.background?.id);
       state.display.background = undefined;
     }
+    if (body.reloadTv) state.tvReloadAt = new Date().toISOString();
   });
   return {
     display: {

@@ -4,7 +4,7 @@ import { handleTelegramCommand } from "./commands.js";
 import type { StoredState } from "./types.js";
 
 function blankState(): StoredState {
-  return { oauth: {}, display: { mode: "NOW", theme: "gallery", privacy: false } };
+  return { oauth: {}, display: { mode: "NOW", theme: "gallery", mood: "home", privacy: false } };
 }
 
 test("switches the living-room screen and explains it warmly", () => {
@@ -25,6 +25,17 @@ test("retires the month view instead of showing it", () => {
   }, { misha: false, natasha: false });
   assert.equal(state.display.mode, "WEEK");
   assert.match(reply.text, /неделю/i);
+});
+
+test("puts night and play on their own mood, not the color theme", () => {
+  const state = blankState();
+  const reply = handleTelegramCommand("/theme play", (mutator) => {
+    mutator(state);
+    return state;
+  }, { misha: true, natasha: true });
+  assert.equal(state.display.mood, "play");
+  assert.equal(state.display.theme, "gallery");
+  assert.match(reply.text, /шалость/i);
 });
 
 test("opens the mini app from start without a bottom keyboard payload", () => {

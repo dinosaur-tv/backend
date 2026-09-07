@@ -7,6 +7,9 @@ export type DisplayMode = (typeof displayModes)[number];
 export const displayThemes = ["forest", "stone", "tobacco", "taupe", "apple", "gallery", "night", "play"] as const;
 export type DisplayTheme = (typeof displayThemes)[number];
 
+export const displayMoods = ["home", "night", "play"] as const;
+export type DisplayMood = (typeof displayMoods)[number];
+
 export interface OAuthConnection {
   refreshToken: string;
   calendarIds: string[];
@@ -26,6 +29,7 @@ export interface DisplayBackground {
 export interface DisplaySettings {
   mode: DisplayMode;
   theme: DisplayTheme;
+  mood: DisplayMood;
   privacy: boolean;
   note?: DisplayNote;
   background?: DisplayBackground;
@@ -36,6 +40,7 @@ export interface StoredState {
   display: DisplaySettings;
   tvSession?: string;
   tvLinked?: boolean;
+  tvReloadAt?: string;
 }
 
 export interface SnapshotEvent {

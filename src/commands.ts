@@ -1,4 +1,4 @@
-import { displayThemes, type DisplayMode, type DisplayTheme, type StoredState } from "./types.js";
+import { displayThemes, type DisplayMode, type DisplayMood, type DisplayTheme, type StoredState } from "./types.js";
 
 export type TelegramReply = { text: string; openMiniApp?: boolean };
 
@@ -37,10 +37,18 @@ export function handleTelegramCommand(
     return { text: "Месяц мы убрали — слишком шумно для гостиной. Показал неделю, она читается спокойнее." };
   }
   if (command === "/theme") {
-    if (!(displayThemes as readonly string[]).includes(argument)) {
-      return { text: "Выберите тему: gallery, tobacco, taupe, stone, forest, apple, night или play. Или откройте консоль — там это красивее." };
+    if (!(displayThemes as readonly string[]).includes(argument) && argument !== "home") {
+      return { text: "Цвет: gallery, tobacco, taupe, stone, forest или apple. Ночь и шалость — отдельные режимы: /theme night и /theme play." };
     }
-    update((state) => { state.display.theme = argument as DisplayTheme; });
+    if (argument === "night" || argument === "play" || argument === "home") {
+      update((state) => { state.display.mood = argument as DisplayMood; });
+      const names = { home: "обычный дом", night: "ночь", play: "шалость" };
+      return { text: `На экране режим «${names[argument]}».` };
+    }
+    update((state) => {
+      state.display.theme = argument as DisplayTheme;
+      state.display.mood = "home";
+    });
     return { text: `Тема «${argument}» уже едет на телевизор. Очень идёт вашей гостиной.` };
   }
   if (command === "/privacy") {

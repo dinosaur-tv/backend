@@ -5,7 +5,7 @@ import type { StoredState } from "./types.js";
 
 const emptyState = (): StoredState => ({
   oauth: {},
-  display: { mode: "NOW", theme: "gallery", privacy: false },
+  display: { mode: "NOW", theme: "gallery", mood: "home", privacy: false },
 });
 
 interface CipherPayload {
@@ -54,6 +54,11 @@ export class EncryptedStore {
     const parsed = JSON.parse(plaintext.toString("utf8")) as StoredState;
     if (String(parsed.display?.mode) === "MONTH") parsed.display.mode = "WEEK";
     if (!parsed.display?.theme) parsed.display.theme = "gallery";
+    if (parsed.display.theme === "night" || parsed.display.theme === "play") {
+      parsed.display.mood = parsed.display.theme;
+      parsed.display.theme = "gallery";
+    }
+    if (!parsed.display.mood) parsed.display.mood = "home";
     if (parsed.tvLinked === undefined) parsed.tvLinked = Boolean(parsed.tvSession);
     return parsed;
   }
