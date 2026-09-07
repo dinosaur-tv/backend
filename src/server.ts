@@ -6,11 +6,12 @@ import { z } from "zod";
 import { handleTelegramCommand } from "./commands.js";
 import { loadConfig } from "./config.js";
 import { GoogleCalendarService } from "./google.js";
+import { homeTokenAllowed, issueHomeToken, rememberHomeToken } from "./home-auth.js";
 import { BackgroundStore, MediaError } from "./media.js";
 import { PairingDesk } from "./pairing.js";
 import { EncryptedStore } from "./store.js";
 import { parseTelegramUpdate, telegramWebhookReply, verifiedTelegramWebAppUserId } from "./telegram.js";
-import { displayModes, displayMoods, displayThemes, liveNote, noteDurationsMin, noteExpiresAt, parseNoteMinutes, people, type DisplayMood, type DisplayTheme, type SnapshotEvent, type WeatherSnapshot } from "./types.js";
+import { displayModes, displayMoods, displayThemes, liveNote, normalizeRotation, noteDurationsMin, noteExpiresAt, parseNoteMinutes, people, type DisplayMood, type DisplayTheme, type SnapshotEvent, type WeatherSnapshot } from "./types.js";
 import { MusicDesk, musicActions } from "./music.js";
 import { parseTvVisible, TvPresence } from "./tv-presence.js";
 import { fallbackWeather, saintPetersburgWeather } from "./weather.js";
@@ -57,7 +58,7 @@ app.addHook("onRequest", async (request, reply) => {
   const origin = request.headers.origin;
   if (origin !== config.MINI_APP_ORIGIN) return;
   reply.header("Access-Control-Allow-Origin", origin);
-  reply.header("Access-Control-Allow-Headers", "content-type, authorization, x-telegram-init-data");
+  reply.header("Access-Control-Allow-Headers", "content-type, authorization, x-telegram-init-data, x-dino-visible, x-dino-home-token");
   reply.header("Access-Control-Allow-Methods", "GET, PATCH, POST, OPTIONS");
   reply.header("Vary", "Origin");
   if (request.method === "OPTIONS") return reply.code(204).send();
@@ -158,7 +159,7 @@ app.get("/v1/media/background/:id", async (request, reply) => {
 });
 
 app.get("/v1/miniapp/state", async (request) => {
-  requireMiniAppUser(firstHeader(request.headers["x-telegram-init-data"]));
+  requireMiniAppUser(request);
   const state = store.read();
   return {
     display: {
@@ -177,18 +178,28 @@ app.get("/v1/miniapp/state", async (request) => {
 });
 
 app.patch("/v1/miniapp/display", async (request) => {
-  requireMiniAppUser(firstHeader(request.headers["x-telegram-init-data"]));
+  requireMiniAppUser(request);
   const body = z.object({
     mode: z.enum(displayModes).optional(),
     theme: z.enum(displayThemes).optional(),
     mood: z.enum(displayMoods).optional(),
     privacy: z.boolean().optional(),
+    showWeather: z.boolean().optional(),
+    showCalendar: z.boolean().optional(),
     note: z.string().trim().min(1).max(180).optional(),
     noteMinutes: z.number().int().refine((value) => (noteDurationsMin as readonly number[]).includes(value)).optional(),
     clearNote: z.boolean().optional(),
     clearBackground: z.boolean().optional(),
     reloadTv: z.boolean().optional(),
     tvPower: z.enum(["on", "off"]).optional(),
+    rotation: z.object({
+      enabled: z.boolean().optional(),
+      seconds: z.number().optional(),
+      interval: z.number().optional(),
+      now: z.number().optional(),
+      today: z.number().optional(),
+      week: z.number().optional(),
+    }).optional(),
   }).parse(request.body);
   if (body.clearNote && body.note) throw Object.assign(new Error("Choose note or clearNote"), { statusCode: 400 });
   const updated = store.update((state) => {
@@ -201,6 +212,8 @@ app.patch("/v1/miniapp/display", async (request) => {
     }
     if (body.mood) state.display.mood = body.mood as DisplayMood;
     if (body.privacy !== undefined) state.display.privacy = body.privacy;
+    if (body.showWeather !== undefined) state.display.showWeather = body.showWeather;
+    if (body.showCalendar !== undefined) state.display.showCalendar = body.showCalendar;
     if (body.note) {
       state.display.note = { text: body.note, expiresAt: noteExpiresAt(parseNoteMinutes(body.noteMinutes)) };
     }
@@ -213,6 +226,9 @@ app.patch("/v1/miniapp/display", async (request) => {
     if (body.tvPower) {
       state.tvPower = body.tvPower;
       state.tvPowerAt = new Date().toISOString();
+    }
+    if (body.rotation) {
+      state.display.rotation = normalizeRotation({ ...state.display.rotation, ...body.rotation });
     }
   });
   return {
@@ -228,7 +244,7 @@ app.patch("/v1/miniapp/display", async (request) => {
 });
 
 app.post("/v1/miniapp/music", async (request) => {
-  requireMiniAppUser(firstHeader(request.headers["x-telegram-init-data"]));
+  requireMiniAppUser(request);
   const body = z.object({
     action: z.enum(musicActions),
     volume: z.number().min(0).max(100).optional(),
@@ -241,7 +257,7 @@ app.post("/v1/miniapp/music", async (request) => {
 });
 
 app.post("/v1/miniapp/background", async (request) => {
-  requireMiniAppUser(firstHeader(request.headers["x-telegram-init-data"]));
+  requireMiniAppUser(request);
   const body = z.object({ image: z.string().min(32) }).parse(request.body);
   const saved = backgrounds.save(body.image);
   const updated = store.update((state) => {
@@ -257,13 +273,16 @@ app.post("/v1/miniapp/background", async (request) => {
 });
 
 app.post("/v1/miniapp/pair/approve", async (request) => {
-  requireMiniAppUser(firstHeader(request.headers["x-telegram-init-data"]));
   const body = z.object({ code: z.string().regex(/^\d{6}$/) }).parse(request.body);
   if (!pairing.approve(body.code, store.tvSession())) {
     throw Object.assign(new Error("Не нашёл такой код. Проверьте цифры на телевизоре."), { statusCode: 404 });
   }
-  store.update((state) => { state.tvLinked = true; });
-  return { ok: true };
+  const issued = issueHomeToken();
+  store.update((state) => {
+    state.tvLinked = true;
+    state.homeTokens = rememberHomeToken(state.homeTokens, issued.hash);
+  });
+  return { ok: true, homeToken: issued.token };
 });
 
 app.post("/v1/telegram/webhook", async (request, reply) => {
@@ -313,13 +332,22 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function requireMiniAppUser(initData: string | undefined): void {
-  if (!config.TELEGRAM_BOT_TOKEN) throw Object.assign(new Error("Telegram Mini App is not configured"), { statusCode: 503 });
-  const userId = verifiedTelegramWebAppUserId(initData, config.TELEGRAM_BOT_TOKEN);
-  if (!userId) throw Object.assign(new Error("Invalid Telegram init data"), { statusCode: 401 });
-  if (!config.allowedTelegramUsers.has(String(userId))) {
-    throw Object.assign(new Error("Telegram user is not allowed"), { statusCode: 403 });
+function miniAppUserAllowed(request: { headers: Record<string, string | string[] | undefined> }): boolean {
+  const initData = firstHeader(request.headers["x-telegram-init-data"]);
+  const homeToken = firstHeader(request.headers["x-dino-home-token"]);
+  if (config.TELEGRAM_BOT_TOKEN) {
+    const userId = verifiedTelegramWebAppUserId(initData, config.TELEGRAM_BOT_TOKEN);
+    if (userId && config.allowedTelegramUsers.has(String(userId))) return true;
   }
+  return homeTokenAllowed(homeToken, store.read().homeTokens ?? []);
+}
+
+function requireMiniAppUser(request: { headers: Record<string, string | string[] | undefined> }): void {
+  if (miniAppUserAllowed(request)) return;
+  const initData = firstHeader(request.headers["x-telegram-init-data"]);
+  const homeToken = firstHeader(request.headers["x-dino-home-token"]);
+  if (!initData && !homeToken) throw Object.assign(new Error("Введите код с телевизора во вкладке «Ещё»"), { statusCode: 401 });
+  throw Object.assign(new Error("Нет доступа к пульту"), { statusCode: 401 });
 }
 
 function groupByDay(events: Awaited<ReturnType<typeof calendars.eventsForNextMonth>>) {

@@ -4,7 +4,7 @@ import { handleTelegramCommand } from "./commands.js";
 import type { StoredState } from "./types.js";
 
 function blankState(): StoredState {
-  return { oauth: {}, display: { mode: "NOW", theme: "gallery", mood: "home", privacy: false } };
+  return { oauth: {}, display: { mode: "NOW", theme: "gallery", mood: "home", privacy: false, showWeather: true, showCalendar: true, rotation: { enabled: true, now: 30, today: 30, week: 30 } } };
 }
 
 test("switches the living-room screen and explains it warmly", () => {
@@ -57,6 +57,16 @@ test("switches to a city scene with a human name", () => {
   }, { misha: true, natasha: true });
   assert.equal(state.display.theme, "petersburg");
   assert.match(reply.text, /Петербург/);
+});
+
+test("switches to a pattern scene", () => {
+  const state = blankState();
+  const reply = handleTelegramCommand("/theme byzantium", (mutator) => {
+    mutator(state);
+    return state;
+  }, { misha: true, natasha: true });
+  assert.equal(state.display.theme, "byzantium");
+  assert.match(reply.text, /Византия/);
 });
 
 test("opens the mini app from start without a bottom keyboard payload", () => {

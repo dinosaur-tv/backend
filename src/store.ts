@@ -1,11 +1,11 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { StoredState } from "./types.js";
+import { defaultRotation, normalizeRotation, type StoredState } from "./types.js";
 
 const emptyState = (): StoredState => ({
   oauth: {},
-  display: { mode: "NOW", theme: "gallery", mood: "home", privacy: false },
+  display: { mode: "NOW", theme: "gallery", mood: "home", privacy: false, showWeather: true, showCalendar: true, rotation: defaultRotation() },
 });
 
 interface CipherPayload {
@@ -62,6 +62,9 @@ export class EncryptedStore {
       parsed.display.theme = "gallery";
     }
     if (!parsed.display.mood) parsed.display.mood = "home";
+    parsed.display.rotation = normalizeRotation(parsed.display.rotation);
+    if (parsed.display.showWeather === undefined) parsed.display.showWeather = true;
+    if (parsed.display.showCalendar === undefined) parsed.display.showCalendar = true;
     if (parsed.tvLinked === undefined) parsed.tvLinked = Boolean(parsed.tvSession);
     return parsed;
   }

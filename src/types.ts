@@ -6,7 +6,7 @@ export type DisplayMode = (typeof displayModes)[number];
 
 export const displayThemes = [
   "gallery", "home-day", "home-evening", "night", "play", "forest", "mountains", "sea", "space",
-  "petersburg", "rome", "florence", "venice",
+  "petersburg", "rome", "florence", "venice", "rus", "byzantium", "india", "italy",
 ] as const;
 export type DisplayTheme = (typeof displayThemes)[number];
 
@@ -48,13 +48,48 @@ export interface DisplayBackground {
   mime: "image/jpeg" | "image/png" | "image/webp";
 }
 
+export interface DisplayRotation {
+  enabled: boolean;
+  now: number;
+  today: number;
+  week: number;
+}
+
+export const rotationSecondsMin = 5;
+export const rotationSecondsMax = 300;
+
+export function parseRotationSeconds(value: unknown, fallback = 30): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(rotationSecondsMax, Math.max(rotationSecondsMin, Math.round(n)));
+}
+
+export function defaultRotation(): DisplayRotation {
+  return { enabled: true, now: 30, today: 30, week: 30 };
+}
+
+export function normalizeRotation(value?: Partial<DisplayRotation> & { seconds?: number; interval?: number }): DisplayRotation {
+  const base = defaultRotation();
+  if (!value) return base;
+  const shared = value.seconds ?? value.interval;
+  return {
+    enabled: value.enabled !== false,
+    now: parseRotationSeconds(value.now ?? shared, base.now),
+    today: parseRotationSeconds(value.today ?? shared, base.today),
+    week: parseRotationSeconds(value.week ?? shared, base.week),
+  };
+}
+
 export interface DisplaySettings {
   mode: DisplayMode;
   theme: DisplayTheme;
   mood: DisplayMood;
   privacy: boolean;
+  showWeather: boolean;
+  showCalendar: boolean;
   note?: DisplayNote;
   background?: DisplayBackground;
+  rotation: DisplayRotation;
 }
 
 export interface StoredState {
@@ -65,6 +100,7 @@ export interface StoredState {
   tvReloadAt?: string;
   tvPower?: "on" | "off";
   tvPowerAt?: string;
+  homeTokens?: string[];
 }
 
 export interface SnapshotEvent {

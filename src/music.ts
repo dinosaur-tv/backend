@@ -14,7 +14,7 @@ export class MusicDesk {
 
   async command(action: MusicAction, _volume?: number): Promise<{ connected: boolean; nowPlaying?: NowPlaying }> {
     if (action === "toTv") {
-      throw Object.assign(new Error("Откройте Кинопоиск на ТВ и в Яндекс Музыке на телефоне выберите телевизор."), { statusCode: 409 });
+      throw Object.assign(new Error("С пульта трек на ТВ сам не уезжает. В Яндекс Музыке на телефоне нажмите значок колонки и выберите телевизор / Кинопоиск."), { statusCode: 409 });
     }
     if (!this.token) {
       throw Object.assign(new Error("Яндекс Музыка на сервере ещё не подключена."), { statusCode: 503 });

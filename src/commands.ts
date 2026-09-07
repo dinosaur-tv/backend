@@ -38,7 +38,7 @@ export function handleTelegramCommand(
   }
   if (command === "/theme") {
     if (!(displayThemes as readonly string[]).includes(argument) && argument !== "home") {
-      return { text: "Сцены: gallery, home-day, home-evening, night, play, forest, mountains, sea, space, petersburg, rome, florence или venice. Например: /theme petersburg." };
+      return { text: "Сцены: gallery, home-day, home-evening, night, play, forest, mountains, sea, space, petersburg, rome, florence, venice, rus, byzantium, india или italy. Например: /theme petersburg." };
     }
     if (argument === "night" || argument === "play" || argument === "home") {
       update((state) => { state.display.mood = argument as DisplayMood; });
@@ -61,6 +61,10 @@ export function handleTelegramCommand(
       rome: "Рим",
       florence: "Флоренция",
       venice: "Венеция",
+      rus: "Русский узор",
+      byzantium: "Византия",
+      india: "Индия",
+      italy: "Итальянский узор",
     };
     return { text: `Сцена «${names[argument as DisplayTheme] ?? argument}» уже оживает на телевизоре.` };
   }
