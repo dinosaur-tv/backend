@@ -9,9 +9,10 @@ import { GoogleCalendarService } from "./google.js";
 import { BackgroundStore, MediaError } from "./media.js";
 import { PairingDesk } from "./pairing.js";
 import { EncryptedStore } from "./store.js";
-import { verifiedTelegramWebAppUserId } from "./telegram.js";
+import { parseTelegramUpdate, telegramWebhookReply, verifiedTelegramWebAppUserId } from "./telegram.js";
 import { displayModes, displayMoods, displayThemes, liveNote, noteDurationsMin, noteExpiresAt, parseNoteMinutes, people, type DisplayMood, type DisplayTheme, type SnapshotEvent, type WeatherSnapshot } from "./types.js";
 import { MusicDesk, musicActions } from "./music.js";
+import { parseTvVisible, TvPresence } from "./tv-presence.js";
 import { fallbackWeather, saintPetersburgWeather } from "./weather.js";
 
 setDefaultResultOrder("ipv4first");
@@ -23,6 +24,7 @@ const backgrounds = new BackgroundStore(join(dataDir, "backgrounds"));
 const calendars = new GoogleCalendarService(config, store);
 const pairing = new PairingDesk();
 const music = new MusicDesk(config.YANDEX_MUSIC_TOKEN);
+const tvPresence = new TvPresence();
 const app = Fastify({ logger: true, trustProxy: true, bodyLimit: 4_000_000 });
 const feedTtlMs = 45_000;
 let cachedWeather: WeatherSnapshot = fallbackWeather();
@@ -111,6 +113,7 @@ app.get("/oauth/google/callback", async (request, reply) => {
 
 app.get("/v1/display/snapshot", async (request, reply) => {
   requireDisplayAccess(request.headers.authorization);
+  tvPresence.touch(parseTvVisible(firstHeader(request.headers["x-dino-visible"])));
   await livingRoomFeed();
   const state = store.read();
   const note = liveNote(state.display.note);
@@ -125,6 +128,8 @@ app.get("/v1/display/snapshot", async (request, reply) => {
       backgroundUrl: state.display.background ? `${config.PUBLIC_BASE_URL}/v1/media/background/${state.display.background.id}` : undefined,
     },
     reloadAt: state.tvReloadAt,
+    power: state.tvPower === "off" ? "off" : "on",
+    powerAt: state.tvPowerAt,
     nowPlaying: music.snapshot().nowPlaying,
     music: { connected: music.snapshot().connected },
     connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
@@ -164,6 +169,7 @@ app.get("/v1/miniapp/state", async (request) => {
     connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
     weatherCity: "Санкт-Петербург",
     tvLinked: Boolean(state.tvLinked),
+    ...tvView(state),
     tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
     nowPlaying: music.snapshot().nowPlaying,
     music: { connected: music.snapshot().connected },
@@ -182,6 +188,7 @@ app.patch("/v1/miniapp/display", async (request) => {
     clearNote: z.boolean().optional(),
     clearBackground: z.boolean().optional(),
     reloadTv: z.boolean().optional(),
+    tvPower: z.enum(["on", "off"]).optional(),
   }).parse(request.body);
   if (body.clearNote && body.note) throw Object.assign(new Error("Choose note or clearNote"), { statusCode: 400 });
   const updated = store.update((state) => {
@@ -203,6 +210,10 @@ app.patch("/v1/miniapp/display", async (request) => {
       state.display.background = undefined;
     }
     if (body.reloadTv) state.tvReloadAt = new Date().toISOString();
+    if (body.tvPower) {
+      state.tvPower = body.tvPower;
+      state.tvPowerAt = new Date().toISOString();
+    }
   });
   return {
     display: {
@@ -210,6 +221,7 @@ app.patch("/v1/miniapp/display", async (request) => {
       note: liveNote(updated.display.note),
       backgroundUrl: updated.display.background ? `${config.PUBLIC_BASE_URL}/v1/media/background/${updated.display.background.id}` : undefined,
     },
+    ...tvView(updated),
     nowPlaying: music.snapshot().nowPlaying,
     music: { connected: music.snapshot().connected },
   };
@@ -257,28 +269,26 @@ app.post("/v1/miniapp/pair/approve", async (request) => {
 app.post("/v1/telegram/webhook", async (request, reply) => {
   const secret = request.headers["x-telegram-bot-api-secret-token"];
   if (secret !== config.TELEGRAM_WEBHOOK_SECRET) return reply.code(401).send({ ok: false });
-  const body = z.object({
-    message: z.object({
-      text: z.string().optional(),
-      from: z.object({ id: z.number() }).optional(),
-      chat: z.object({ id: z.number() }),
-    }).optional(),
-  }).passthrough().parse(request.body);
+  const body = parseTelegramUpdate(request.body);
+  if (!body) {
+    app.log.warn("Ignored malformed Telegram update");
+    return reply.send({ ok: true });
+  }
   const message = body.message;
   if (!message?.text || !message.from || !config.allowedTelegramUsers.has(String(message.from.id))) {
     return reply.send({ ok: true });
   }
-  const connected = store.read().oauth;
-  const response = handleTelegramCommand(message.text, (mutator) => store.update(mutator), {
-    misha: Boolean(connected.misha),
-    natasha: Boolean(connected.natasha),
-  });
   try {
-    await replyToTelegram(message.chat.id, response);
+    const connected = store.read().oauth;
+    const response = handleTelegramCommand(message.text, (mutator) => store.update(mutator), {
+      misha: Boolean(connected.misha),
+      natasha: Boolean(connected.natasha),
+    });
+    return reply.send(telegramWebhookReply(message.chat.id, response, config.TELEGRAM_WEB_APP_URL));
   } catch (error) {
-    app.log.warn({ err: error }, "Telegram reply failed");
+    app.log.warn({ err: error }, "Telegram command failed");
+    return reply.send({ ok: true });
   }
-  return reply.send({ ok: true });
 });
 
 function requireDisplayAccess(header: string | undefined): void {
@@ -292,6 +302,13 @@ function requireDisplayAccess(header: string | undefined): void {
   if (!allowed) throw Object.assign(new Error("Unauthorized"), { statusCode: 401 });
 }
 
+function tvView(state = store.read()) {
+  return {
+    tvOnline: tvPresence.online() && state.tvPower !== "off",
+    tvPower: state.tvPower === "off" ? "off" as const : "on" as const,
+  };
+}
+
 function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -303,21 +320,6 @@ function requireMiniAppUser(initData: string | undefined): void {
   if (!config.allowedTelegramUsers.has(String(userId))) {
     throw Object.assign(new Error("Telegram user is not allowed"), { statusCode: 403 });
   }
-}
-
-async function replyToTelegram(chatId: number, reply: { text: string; openMiniApp?: boolean }): Promise<void> {
-  if (!config.TELEGRAM_BOT_TOKEN) return;
-  const replyMarkup: Record<string, unknown> = { remove_keyboard: true };
-  if (reply.openMiniApp) {
-    replyMarkup.inline_keyboard = [[{ text: "Открыть Dino TV", web_app: { url: config.TELEGRAM_WEB_APP_URL } }]];
-  }
-  const response = await fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text: reply.text, reply_markup: replyMarkup }),
-    signal: AbortSignal.timeout(12_000),
-  });
-  if (!response.ok) app.log.warn({ status: response.status }, "Telegram reply failed");
 }
 
 function groupByDay(events: Awaited<ReturnType<typeof calendars.eventsForNextMonth>>) {

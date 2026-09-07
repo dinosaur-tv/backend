@@ -49,6 +49,16 @@ test("switches to a fully designed environment scene", () => {
   assert.match(reply.text, /Горы/);
 });
 
+test("switches to a city scene with a human name", () => {
+  const state = blankState();
+  const reply = handleTelegramCommand("/theme petersburg", (mutator) => {
+    mutator(state);
+    return state;
+  }, { misha: true, natasha: true });
+  assert.equal(state.display.theme, "petersburg");
+  assert.match(reply.text, /Петербург/);
+});
+
 test("opens the mini app from start without a bottom keyboard payload", () => {
   const reply = handleTelegramCommand("/start", (mutator) => {
     mutator(blankState());

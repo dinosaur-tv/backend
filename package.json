@@ -9,7 +9,7 @@
     "start": "node dist/server.js",
     "check": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "npm run build && node --test dist/telegram.test.js dist/commands.test.js dist/weather.test.js dist/media.test.js dist/pairing.test.js dist/music.test.js dist/note.test.js",
+    "test": "npm run build && node --test dist/telegram.test.js dist/commands.test.js dist/weather.test.js dist/media.test.js dist/pairing.test.js dist/music.test.js dist/note.test.js dist/tv-presence.test.js",
     "quality": "npm run check && npm run lint && npm test"
   },
   "dependencies": {

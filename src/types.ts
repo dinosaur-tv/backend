@@ -5,7 +5,8 @@ export const displayModes = ["NOW", "TODAY", "WEEK"] as const;
 export type DisplayMode = (typeof displayModes)[number];
 
 export const displayThemes = [
-  "gallery", "night", "play", "forest", "mountains", "sea", "space",
+  "gallery", "home-day", "home-evening", "night", "play", "forest", "mountains", "sea", "space",
+  "petersburg", "rome", "florence", "venice",
 ] as const;
 export type DisplayTheme = (typeof displayThemes)[number];
 
@@ -62,6 +63,8 @@ export interface StoredState {
   tvSession?: string;
   tvLinked?: boolean;
   tvReloadAt?: string;
+  tvPower?: "on" | "off";
+  tvPowerAt?: string;
 }
 
 export interface SnapshotEvent {

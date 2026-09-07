@@ -101,7 +101,7 @@ curl -F "url=https://api.example.com/v1/telegram/webhook" \
 bash scripts/set-telegram-webhook.sh
 ```
 
-Команды: `/now`, `/today`, `/week`, `/month`, `/theme gallery|night|play|forest|mountains|sea|space`, `/privacy on|off`, `/note текст`, `/status`.
+Команды: `/now`, `/today`, `/week`, `/month`, `/theme gallery|home-day|home-evening|night|play|forest|mountains|sea|space|petersburg|rome|florence|venice`, `/privacy on|off`, `/note текст`, `/status`.
 
 ## API для телевизора
 
