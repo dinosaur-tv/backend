@@ -24,7 +24,14 @@ const dataDir = join(process.cwd(), "data");
 const store = new EncryptedStore(join(dataDir, "state.enc"), config.TOKEN_ENCRYPTION_KEY);
 const backgrounds = new BackgroundStore(join(dataDir, "backgrounds"));
 const calendars = new GoogleCalendarService(config, store);
-const pairing = new PairingDesk();
+const pairing = new PairingDesk({
+  load: () => store.read().pairings ?? [],
+  save: (pairings) => {
+    store.update((state) => {
+      state.pairings = pairings;
+    });
+  },
+});
 const music = new MusicDesk(config.YANDEX_MUSIC_TOKEN);
 const tvDesk = new TvDesk();
 const tvPresence = new TvPresence();

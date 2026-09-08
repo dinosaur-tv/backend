@@ -93,6 +93,13 @@ export interface DisplaySettings {
   rotation: DisplayRotation;
 }
 
+export interface StoredPairing {
+  pairId: string;
+  code: string;
+  session?: string;
+  expiresAt: number;
+}
+
 export interface StoredState {
   oauth: Partial<Record<Person, OAuthConnection>>;
   display: DisplaySettings;
@@ -102,6 +109,8 @@ export interface StoredState {
   tvPower?: "on" | "off";
   tvPowerAt?: string;
   homeTokens?: string[];
+  /** Open TV / phone invite codes. Kept on disk so a backend restart does not orphan the digits on screen. */
+  pairings?: StoredPairing[];
 }
 
 export interface SnapshotEvent {
