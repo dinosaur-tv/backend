@@ -412,7 +412,7 @@ function requireMiniAppUser(request: { headers: Record<string, string | string[]
   const initData = firstHeader(request.headers["x-telegram-init-data"]);
   const homeToken = firstHeader(request.headers["x-dino-home-token"]);
   if (!initData && !homeToken) throw Object.assign(new Error("Введите код с телевизора во вкладке «Ещё»"), { statusCode: 401 });
-  throw Object.assign(new Error("Нет доступа к пульту"), { statusCode: 401 });
+  throw Object.assign(new Error("Связь с пультом устарела. Откройте «Ещё» и снова введите код с телевизора."), { statusCode: 401 });
 }
 
 function groupByDay(events: Awaited<ReturnType<typeof calendars.eventsForNextMonth>>) {

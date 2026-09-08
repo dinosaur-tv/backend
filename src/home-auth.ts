@@ -18,6 +18,6 @@ export function homeTokenAllowed(token: string | undefined, hashes: string[]): b
   });
 }
 
-export function rememberHomeToken(hashes: string[] | undefined, hash: string, keep = 8): string[] {
+export function rememberHomeToken(hashes: string[] | undefined, hash: string, keep = 32): string[] {
   return [...(hashes ?? []).filter((item) => item !== hash), hash].slice(-keep);
 }
