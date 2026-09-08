@@ -21,3 +21,13 @@ test("old television clients without a visibility header still count as on-scree
   assert.equal(parseTvVisible("1"), true);
   assert.equal(parseTvVisible("0"), false);
 });
+
+test("the default grace window survives a slow calendar refresh", () => {
+  let now = 1_000;
+  const presence = new TvPresence(undefined, () => now);
+  presence.touch(true);
+  now += 8_000;
+  assert.equal(presence.online(), true);
+  now += 7_100;
+  assert.equal(presence.online(), false);
+});

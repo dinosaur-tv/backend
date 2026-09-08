@@ -101,7 +101,7 @@ curl -F "url=https://api.example.com/v1/telegram/webhook" \
 bash scripts/set-telegram-webhook.sh
 ```
 
-Команды: `/today`, `/tomorrow`, `/week`, `/month`, `/theme gallery|home-day|home-evening|palace|oak-study|night|play|forest|mountains|sea|space|petersburg|rome|florence|venice|rus|byzantium|india|italy`, `/privacy on|off`, `/note текст`, `/status`. Старый `/now` остаётся алиасом для `/today`.
+Команды: `/today`, `/tomorrow`, `/week`, `/month`, `/theme gallery|home-day|home-evening|palace|oak-study|palace-study|night|play|forest|autumn-forest|mountains|sea|space|petersburg|petersburg-streets|oranienbaum|peterhof|rome|florence|venice|italy-sunset|rus|gzhel|soviet-carpet|byzantium|india|italy`, `/privacy on|off`, `/note текст`, `/status`. Старый `/now` остаётся алиасом для `/today`.
 
 ## API для телевизора
 

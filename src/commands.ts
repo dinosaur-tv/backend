@@ -38,7 +38,7 @@ export function handleTelegramCommand(
   }
   if (command === "/theme") {
     if (!(displayThemes as readonly string[]).includes(argument) && argument !== "home") {
-      return { text: "Сцены: gallery, home-day, home-evening, palace, oak-study, night, play, forest, mountains, sea, space, petersburg, rome, florence, venice, rus, byzantium, india или italy. Например: /theme palace." };
+      return { text: "Сцены: gallery, home-day, home-evening, palace, oak-study, palace-study, night, play, forest, autumn-forest, mountains, sea, space, petersburg, petersburg-streets, oranienbaum, peterhof, rome, florence, venice, italy-sunset, rus, gzhel, soviet-carpet, byzantium, india или italy. Например: /theme peterhof." };
     }
     if (argument === "night" || argument === "play" || argument === "home") {
       update((state) => { state.display.mood = argument as DisplayMood; });
@@ -54,16 +54,24 @@ export function handleTelegramCommand(
       "home-day": "Дом · День",
       "home-evening": "Дом · Вечер",
       forest: "Лес",
+      "autumn-forest": "Осенний лес",
       mountains: "Горы",
       sea: "Море",
       space: "Космос",
       petersburg: "Петербург",
+      "petersburg-streets": "Улицы Петербурга",
+      oranienbaum: "Ораниенбаум",
+      peterhof: "Петергоф",
       rome: "Рим",
       florence: "Флоренция",
       venice: "Венеция",
+      "italy-sunset": "Итальянский закат",
       palace: "Дворец",
       "oak-study": "Дубовый кабинет",
+      "palace-study": "Дворцовый кабинет",
       rus: "Русский узор",
+      gzhel: "Гжель",
+      "soviet-carpet": "Советский ковёр",
       byzantium: "Византия",
       india: "Индия",
       italy: "Итальянский узор",

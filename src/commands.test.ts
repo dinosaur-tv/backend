@@ -80,7 +80,27 @@ test("switches to a pattern scene", () => {
 });
 
 test("switches to both architectural wall scenes", () => {
-  for (const [theme, name] of [["palace", /Дворец/], ["oak-study", /Дубовый кабинет/]] as const) {
+  for (const [theme, name] of [["palace", /Дворец/], ["oak-study", /Дубовый кабинет/], ["palace-study", /Дворцовый кабинет/]] as const) {
+    const state = blankState();
+    const reply = handleTelegramCommand(`/theme ${theme}`, (mutator) => {
+      mutator(state);
+      return state;
+    }, { misha: true, natasha: true });
+    assert.equal(state.display.theme, theme);
+    assert.match(reply.text, name);
+  }
+});
+
+test("switches to every new seasonal, city and ornament scene", () => {
+  for (const [theme, name] of [
+    ["autumn-forest", /Осенний лес/],
+    ["petersburg-streets", /Улицы Петербурга/],
+    ["oranienbaum", /Ораниенбаум/],
+    ["peterhof", /Петергоф/],
+    ["italy-sunset", /Итальянский закат/],
+    ["gzhel", /Гжель/],
+    ["soviet-carpet", /Советский ковёр/],
+  ] as const) {
     const state = blankState();
     const reply = handleTelegramCommand(`/theme ${theme}`, (mutator) => {
       mutator(state);
