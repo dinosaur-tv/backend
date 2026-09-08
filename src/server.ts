@@ -131,8 +131,9 @@ app.get("/v1/display/snapshot", async (request, reply) => {
     reloadAt: state.tvReloadAt,
     power: state.tvPower === "off" ? "off" : "on",
     powerAt: state.tvPowerAt,
-    nowPlaying: music.snapshot().nowPlaying,
+    nowPlaying: music.snapshot().nowPlaying ?? null,
     music: { connected: music.snapshot().connected },
+    musicCommand: music.snapshot().command ?? null,
     connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
     tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
     inviteCode: pairing.waitingCode(),
@@ -159,6 +160,12 @@ app.get("/v1/media/background/:id", async (request, reply) => {
     .send(file.buffer);
 });
 
+app.post("/v1/display/now-playing", async (request) => {
+  requireDisplayAccess(request.headers.authorization);
+  music.hearFromTv(request.body);
+  return { ok: true, nowPlaying: music.snapshot().nowPlaying ?? null };
+});
+
 app.get("/v1/miniapp/state", async (request) => {
   requireMiniAppUser(request);
   const state = store.read();
@@ -173,7 +180,7 @@ app.get("/v1/miniapp/state", async (request) => {
     tvLinked: Boolean(state.tvLinked),
     ...tvView(state),
     tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
-    nowPlaying: music.snapshot().nowPlaying,
+    nowPlaying: music.snapshot().nowPlaying ?? null,
     music: { connected: music.snapshot().connected },
   };
 });
@@ -240,7 +247,7 @@ app.patch("/v1/miniapp/display", async (request) => {
       backgroundUrl: updated.display.background ? `${config.PUBLIC_BASE_URL}/v1/media/background/${updated.display.background.id}` : undefined,
     },
     ...tvView(updated),
-    nowPlaying: music.snapshot().nowPlaying,
+    nowPlaying: music.snapshot().nowPlaying ?? null,
     music: { connected: music.snapshot().connected },
   };
 });
@@ -251,10 +258,22 @@ app.post("/v1/miniapp/music", async (request) => {
     action: z.enum(musicActions),
     volume: z.number().min(0).max(100).optional(),
   }).parse(request.body);
+  if (body.action === "toTv") {
+    const updated = store.update((state) => {
+      state.tvPower = "on";
+      state.tvPowerAt = new Date().toISOString();
+    });
+    return {
+      nowPlaying: music.snapshot().nowPlaying ?? null,
+      music: { connected: music.snapshot().connected },
+      ...tvView(updated),
+    };
+  }
   const result = await music.command(body.action, body.volume);
   return {
-    nowPlaying: result.nowPlaying,
+    nowPlaying: result.nowPlaying ?? null,
     music: { connected: result.connected },
+    ...tvView(),
   };
 });
 
