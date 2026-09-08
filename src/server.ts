@@ -13,6 +13,7 @@ import { EncryptedStore } from "./store.js";
 import { parseTelegramUpdate, telegramWebhookReply, verifiedTelegramWebAppUserId } from "./telegram.js";
 import { displayModes, displayMoods, displayThemes, liveNote, normalizeRotation, noteDurationsMin, noteExpiresAt, parseNoteMinutes, people, type DisplayMood, type DisplayTheme, type SnapshotEvent, type WeatherSnapshot } from "./types.js";
 import { MusicDesk, musicActions } from "./music.js";
+import { TvDesk, tvApps, tvKeys } from "./tv-command.js";
 import { parseTvVisible, TvPresence } from "./tv-presence.js";
 import { fallbackWeather, saintPetersburgWeather } from "./weather.js";
 
@@ -25,6 +26,7 @@ const backgrounds = new BackgroundStore(join(dataDir, "backgrounds"));
 const calendars = new GoogleCalendarService(config, store);
 const pairing = new PairingDesk();
 const music = new MusicDesk(config.YANDEX_MUSIC_TOKEN);
+const tvDesk = new TvDesk();
 const tvPresence = new TvPresence();
 const app = Fastify({ logger: true, trustProxy: true, bodyLimit: 4_000_000 });
 const feedTtlMs = 45_000;
@@ -134,6 +136,7 @@ app.get("/v1/display/snapshot", async (request, reply) => {
     nowPlaying: music.snapshot().nowPlaying ?? null,
     music: { connected: music.snapshot().connected },
     musicCommand: music.snapshot().command ?? null,
+    tvCommand: tvDesk.snapshot().command ?? null,
     connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
     tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
     inviteCode: pairing.waitingCode(),
@@ -274,6 +277,33 @@ app.post("/v1/miniapp/music", async (request) => {
     nowPlaying: result.nowPlaying ?? null,
     music: { connected: result.connected },
     ...tvView(),
+  };
+});
+
+app.post("/v1/miniapp/tv", async (request) => {
+  requireMiniAppUser(request);
+  const body = z.union([
+    z.object({ action: z.literal("launch"), app: z.enum(tvApps) }),
+    z.object({ action: z.literal("key"), key: z.enum(tvKeys) }),
+  ]).parse(request.body);
+  const command = body.action === "launch" ? tvDesk.launch(body.app) : tvDesk.key(body.key);
+  let powerState = store.read();
+  if (body.action === "launch" && body.app === "kinopoisk") {
+    powerState = store.update((state) => {
+      state.tvPower = "off";
+      state.tvPowerAt = new Date().toISOString();
+    });
+  }
+  if (body.action === "launch" && body.app === "dino") {
+    powerState = store.update((state) => {
+      state.tvPower = "on";
+      state.tvPowerAt = new Date().toISOString();
+    });
+  }
+  return {
+    ok: true,
+    tvCommand: command,
+    ...tvView(powerState),
   };
 });
 
