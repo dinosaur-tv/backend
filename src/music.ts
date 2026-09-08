@@ -45,7 +45,7 @@ export class MusicDesk {
   constructor(
     private readonly token?: string,
     private readonly now = () => Date.now(),
-    private readonly liveMs = 8_000,
+    private readonly liveMs = 20_000,
   ) {}
 
   hearFromTv(value: unknown) {

@@ -23,7 +23,7 @@ test("shows the track the television is actually playing", () => {
   assert.equal(desk.snapshot().connected, true);
   assert.equal(desk.snapshot().nowPlaying?.title, "Sweet Harmony");
   assert.equal(desk.snapshot().nowPlaying?.artworkUrl, "");
-  now = 10_000;
+  now = 22_000;
   assert.equal(desk.snapshot().nowPlaying, undefined);
 });
 
