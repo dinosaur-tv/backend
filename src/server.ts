@@ -144,6 +144,7 @@ app.get("/v1/display/snapshot", async (request, reply) => {
     music: { connected: music.snapshot().connected },
     musicCommand: music.snapshot().command ?? null,
     tvCommand: tvDesk.snapshot().command ?? null,
+    tvCommands: tvDesk.snapshot().commands,
     connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
     tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
     inviteCode: pairing.waitingCode(),

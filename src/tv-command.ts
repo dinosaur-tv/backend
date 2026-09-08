@@ -12,21 +12,37 @@ export type TvCommand =
   | { action: "key"; key: TvKey; at: string };
 
 export class TvDesk {
-  private pending: TvCommand | undefined;
+  private readonly commands: TvCommand[] = [];
+  private seq = 0;
 
-  constructor(private readonly now = () => Date.now()) {}
+  constructor(
+    private readonly now = () => Date.now(),
+    private readonly max = 32,
+  ) {}
 
-  snapshot(): { command?: TvCommand } {
-    return { command: this.pending };
+  snapshot(): { command?: TvCommand; commands: TvCommand[] } {
+    return {
+      command: this.commands.at(-1),
+      commands: [...this.commands],
+    };
   }
 
   launch(app: TvApp): TvCommand {
-    this.pending = { action: "launch", app, at: new Date(this.now()).toISOString() };
-    return this.pending;
+    return this.push({ action: "launch", app, at: this.nextAt() });
   }
 
   key(key: TvKey): TvCommand {
-    this.pending = { action: "key", key, at: new Date(this.now()).toISOString() };
-    return this.pending;
+    return this.push({ action: "key", key, at: this.nextAt() });
+  }
+
+  private push(command: TvCommand): TvCommand {
+    this.commands.push(command);
+    while (this.commands.length > this.max) this.commands.shift();
+    return command;
+  }
+
+  private nextAt(): string {
+    this.seq += 1;
+    return `${new Date(this.now()).toISOString()}#${String(this.seq).padStart(4, "0")}`;
   }
 }
