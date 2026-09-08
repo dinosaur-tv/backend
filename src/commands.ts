@@ -3,8 +3,8 @@ import { displayThemes, type DisplayMode, type DisplayMood, type DisplayTheme, t
 export type TelegramReply = { text: string; openMiniApp?: boolean };
 
 const quickCommands: Record<string, string> = {
-  "🕰 Сейчас": "/now",
   "☀️ Сегодня": "/today",
+  "🌤 Завтра": "/tomorrow",
   "🗓 Неделя": "/week",
   "🎨 Галерея": "/theme gallery",
   "🙈 Гостевой режим": "/privacy on",
@@ -12,8 +12,8 @@ const quickCommands: Record<string, string> = {
 };
 
 const modeNames: Record<DisplayMode, string> = {
-  NOW: "«Сейчас»",
   TODAY: "«Сегодня»",
+  TOMORROW: "«Завтра»",
   WEEK: "«Неделя»",
 };
 
@@ -27,8 +27,8 @@ export function handleTelegramCommand(
   const command = commandWithBot.toLowerCase().split("@")[0];
   const argument = argumentsList.join(" ");
 
-  if (command === "/now" || command === "/today" || command === "/week") {
-    const mode = command.slice(1).toUpperCase() as DisplayMode;
+  if (command === "/now" || command === "/today" || command === "/tomorrow" || command === "/week") {
+    const mode = (command === "/now" ? "TODAY" : command.slice(1).toUpperCase()) as DisplayMode;
     update((state) => { state.display.mode = mode; });
     return { text: `Готово — на экране ${modeNames[mode]}. Через пару секунд телевизор сам подхватит.` };
   }
@@ -96,6 +96,6 @@ export function handleTelegramCommand(
     };
   }
   return {
-    text: "Я рядом. Откройте консоль кнопкой у поля ввода или напишите /now, /today, /week, /theme, /privacy, /note либо /status.",
+    text: "Я рядом. Откройте консоль кнопкой у поля ввода или напишите /today, /tomorrow, /week, /theme, /privacy, /note либо /status.",
   };
 }

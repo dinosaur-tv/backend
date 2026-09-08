@@ -18,7 +18,7 @@ curl --fail-with-body --silent --show-error \
   "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setChatMenuButton" >/dev/null
 
 curl --fail-with-body --silent --show-error \
-  --data-urlencode 'commands=[{"command":"home","description":"Открыть домашнюю консоль"},{"command":"now","description":"Экран «Сейчас»"},{"command":"today","description":"Экран «Сегодня»"},{"command":"week","description":"Экран «Неделя»"},{"command":"theme","description":"Выбрать тему"},{"command":"privacy","description":"Гостевой режим"},{"command":"note","description":"Заметка на экране"},{"command":"status","description":"Проверить календари"}]' \
+  --data-urlencode 'commands=[{"command":"home","description":"Открыть домашнюю консоль"},{"command":"today","description":"Экран «Сегодня»"},{"command":"tomorrow","description":"Экран «Завтра»"},{"command":"week","description":"Экран «Неделя»"},{"command":"theme","description":"Выбрать тему"},{"command":"privacy","description":"Гостевой режим"},{"command":"note","description":"Заметка на экране"},{"command":"status","description":"Проверить календари"}]' \
   "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyCommands" >/dev/null
 
 curl --fail-with-body --silent --show-error \

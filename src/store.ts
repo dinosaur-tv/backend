@@ -5,7 +5,7 @@ import { defaultRotation, normalizeRotation, type StoredState } from "./types.js
 
 const emptyState = (): StoredState => ({
   oauth: {},
-  display: { mode: "NOW", theme: "gallery", mood: "home", privacy: false, showWeather: true, showCalendar: true, rotation: defaultRotation() },
+  display: { mode: "TODAY", theme: "gallery", mood: "home", privacy: false, showWeather: true, showCalendar: true, rotation: defaultRotation() },
 });
 
 interface CipherPayload {
@@ -53,6 +53,7 @@ export class EncryptedStore {
     ]);
     const parsed = JSON.parse(plaintext.toString("utf8")) as StoredState;
     if (String(parsed.display?.mode) === "MONTH") parsed.display.mode = "WEEK";
+    if (String(parsed.display?.mode) === "NOW") parsed.display.mode = "TODAY";
     if (!parsed.display?.theme) parsed.display.theme = "gallery";
     if (["stone", "tobacco", "taupe", "apple"].includes(String(parsed.display.theme))) {
       parsed.display.theme = "gallery";

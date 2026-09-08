@@ -198,6 +198,7 @@ app.patch("/v1/miniapp/display", async (request) => {
       interval: z.number().optional(),
       now: z.number().optional(),
       today: z.number().optional(),
+      tomorrow: z.number().optional(),
       week: z.number().optional(),
     }).optional(),
   }).parse(request.body);

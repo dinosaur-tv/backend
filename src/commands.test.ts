@@ -4,7 +4,7 @@ import { handleTelegramCommand } from "./commands.js";
 import type { StoredState } from "./types.js";
 
 function blankState(): StoredState {
-  return { oauth: {}, display: { mode: "NOW", theme: "gallery", mood: "home", privacy: false, showWeather: true, showCalendar: true, rotation: { enabled: true, now: 30, today: 30, week: 30 } } };
+  return { oauth: {}, display: { mode: "TODAY", theme: "gallery", mood: "home", privacy: false, showWeather: true, showCalendar: true, rotation: { enabled: true, today: 30, tomorrow: 30, week: 30 } } };
 }
 
 test("switches the living-room screen and explains it warmly", () => {
@@ -15,6 +15,16 @@ test("switches the living-room screen and explains it warmly", () => {
   }, { misha: true, natasha: false });
   assert.equal(state.display.mode, "TODAY");
   assert.match(reply.text, /Сегодня/);
+});
+
+test("switches the living-room screen to tomorrow", () => {
+  const state = blankState();
+  const reply = handleTelegramCommand("/tomorrow", (mutator) => {
+    mutator(state);
+    return state;
+  }, { misha: true, natasha: true });
+  assert.equal(state.display.mode, "TOMORROW");
+  assert.match(reply.text, /Завтра/);
 });
 
 test("retires the month view instead of showing it", () => {

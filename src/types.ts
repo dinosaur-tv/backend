@@ -1,7 +1,7 @@
 export const people = ["misha", "natasha"] as const;
 export type Person = (typeof people)[number];
 
-export const displayModes = ["NOW", "TODAY", "WEEK"] as const;
+export const displayModes = ["TODAY", "TOMORROW", "WEEK"] as const;
 export type DisplayMode = (typeof displayModes)[number];
 
 export const displayThemes = [
@@ -50,8 +50,8 @@ export interface DisplayBackground {
 
 export interface DisplayRotation {
   enabled: boolean;
-  now: number;
   today: number;
+  tomorrow: number;
   week: number;
 }
 
@@ -65,17 +65,17 @@ export function parseRotationSeconds(value: unknown, fallback = 30): number {
 }
 
 export function defaultRotation(): DisplayRotation {
-  return { enabled: true, now: 30, today: 30, week: 30 };
+  return { enabled: true, today: 30, tomorrow: 30, week: 30 };
 }
 
-export function normalizeRotation(value?: Partial<DisplayRotation> & { seconds?: number; interval?: number }): DisplayRotation {
+export function normalizeRotation(value?: Partial<DisplayRotation> & { now?: number; seconds?: number; interval?: number }): DisplayRotation {
   const base = defaultRotation();
   if (!value) return base;
   const shared = value.seconds ?? value.interval;
   return {
     enabled: value.enabled !== false,
-    now: parseRotationSeconds(value.now ?? shared, base.now),
-    today: parseRotationSeconds(value.today ?? shared, base.today),
+    today: parseRotationSeconds(value.today ?? value.now ?? shared, base.today),
+    tomorrow: parseRotationSeconds(value.tomorrow ?? value.today ?? value.now ?? shared, base.tomorrow),
     week: parseRotationSeconds(value.week ?? shared, base.week),
   };
 }
