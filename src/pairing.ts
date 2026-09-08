@@ -12,9 +12,11 @@ export class PairingDesk {
 
   start(now = Date.now()): Pairing {
     this.forgetExpired(now);
-    for (const [id, pairing] of this.pairings) {
-      if (!pairing.session) this.pairings.delete(id);
-    }
+    // Keep the same waiting code for the full TTL. Multiple TV WebViews and
+    // phone "show code" taps used to call start() and rotate the digits every
+    // few seconds, so nobody could type them in time.
+    const waiting = [...this.pairings.values()].find((item) => !item.session);
+    if (waiting) return waiting;
     const pairing: Pairing = {
       pairId: randomBytes(16).toString("hex"),
       code: String(100_000 + Math.floor(Math.random() * 900_000)),
