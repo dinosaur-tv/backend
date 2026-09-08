@@ -69,6 +69,18 @@ test("switches to a pattern scene", () => {
   assert.match(reply.text, /Византия/);
 });
 
+test("switches to both architectural wall scenes", () => {
+  for (const [theme, name] of [["palace", /Дворец/], ["oak-study", /Дубовый кабинет/]] as const) {
+    const state = blankState();
+    const reply = handleTelegramCommand(`/theme ${theme}`, (mutator) => {
+      mutator(state);
+      return state;
+    }, { misha: true, natasha: true });
+    assert.equal(state.display.theme, theme);
+    assert.match(reply.text, name);
+  }
+});
+
 test("opens the mini app from start without a bottom keyboard payload", () => {
   const reply = handleTelegramCommand("/start", (mutator) => {
     mutator(blankState());
