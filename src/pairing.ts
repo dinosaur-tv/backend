@@ -41,10 +41,9 @@ export class PairingDesk {
 
   waitingCode(now = Date.now()): string | undefined {
     this.forgetExpired(now);
-    const open = [...this.pairings.values()];
-    // Prefer a brand-new code; otherwise keep showing the same digits until
-    // they expire so a second phone can still join after the first one did.
-    return open.find((item) => !item.session)?.code ?? open[0]?.code;
+    // Only unused invites. After the first phone links, stop showing digits on
+    // the TV — a second remote can request a fresh code later via «Показать код».
+    return [...this.pairings.values()].find((item) => !item.session)?.code;
   }
 
   status(pairId: string, now = Date.now()): { status: "waiting" | "ready" | "expired"; session?: string } {

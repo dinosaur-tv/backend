@@ -25,7 +25,7 @@ test("reuses the waiting code until it expires or is approved", () => {
   assert.equal(second.code, first.code);
   assert.equal(desk.waitingCode(1_000), first.code);
   assert.equal(desk.approve(first.code, "tv-session", 1_000), true);
-  assert.equal(desk.waitingCode(1_000), first.code);
+  assert.equal(desk.waitingCode(1_000), undefined);
   const third = desk.start(1_000);
   assert.notEqual(third.code, first.code);
   assert.equal(desk.waitingCode(1_000), third.code);
