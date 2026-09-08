@@ -12,6 +12,9 @@ export class PairingDesk {
 
   start(now = Date.now()): Pairing {
     this.forgetExpired(now);
+    for (const [id, pairing] of this.pairings) {
+      if (!pairing.session) this.pairings.delete(id);
+    }
     const pairing: Pairing = {
       pairId: randomBytes(16).toString("hex"),
       code: String(100_000 + Math.floor(Math.random() * 900_000)),
@@ -19,6 +22,11 @@ export class PairingDesk {
     };
     this.pairings.set(pairing.pairId, pairing);
     return pairing;
+  }
+
+  waitingCode(now = Date.now()): string | undefined {
+    this.forgetExpired(now);
+    return [...this.pairings.values()].find((item) => !item.session)?.code;
   }
 
   status(pairId: string, now = Date.now()): { status: "waiting" | "ready" | "expired"; session?: string } {

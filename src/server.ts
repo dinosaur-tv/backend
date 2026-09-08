@@ -135,6 +135,7 @@ app.get("/v1/display/snapshot", async (request, reply) => {
     music: { connected: music.snapshot().connected },
     connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
     tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
+    inviteCode: pairing.waitingCode(),
   });
 });
 
@@ -273,10 +274,16 @@ app.post("/v1/miniapp/background", async (request) => {
   };
 });
 
+app.post("/v1/miniapp/pair/invite", async (request) => {
+  requireMiniAppUser(request);
+  const started = pairing.start();
+  return { code: started.code, expiresIn: 600 };
+});
+
 app.post("/v1/miniapp/pair/approve", async (request) => {
   const body = z.object({ code: z.string().regex(/^\d{6}$/) }).parse(request.body);
   if (!pairing.approve(body.code, store.tvSession())) {
-    throw Object.assign(new Error("Не нашёл такой код. Проверьте цифры на телевизоре."), { statusCode: 404 });
+    throw Object.assign(new Error("Не нашёл такой код. Возьмите свежий на телевизоре или на другом телефоне."), { statusCode: 404 });
   }
   const issued = issueHomeToken();
   store.update((state) => {
