@@ -13,7 +13,7 @@ function fixture(t: { after: (fn: () => Promise<void>) => void }, remote = "fals
     API_DOMAIN: "api.example.test", PUBLIC_BASE_URL: "https://api.example.test",
     MINI_APP_ORIGIN: "https://home.example.test", TELEGRAM_WEB_APP_URL: "https://home.example.test/console/",
     TOKEN_ENCRYPTION_KEY: randomBytes(32).toString("base64"), DEVICE_TOKEN: "d".repeat(40),
-    OAUTH_CONNECT_TOKEN: "o".repeat(40), TELEGRAM_WEBHOOK_SECRET: "w".repeat(32),
+    TELEGRAM_WEBHOOK_SECRET: "w".repeat(32), OAUTH_FORWARD_URL: "http://127.0.0.1:8003/api/callback",
     TELEGRAM_BOT_TOKEN: "test-bot-token", TELEGRAM_ALLOWED_USER_IDS: "1", TV_REMOTE_ENABLED: remote,
   });
   const app = createApp(config, dir);
@@ -69,4 +69,13 @@ test("OAuth and private backgrounds cannot be accessed anonymously", async (t) =
   assert.equal((await app.inject({ method: "POST", url: "/v1/miniapp/calendars/connect", payload: { person: "misha" } })).statusCode, 401);
   assert.equal((await app.inject("/oauth/google/start?person=misha&key=legacy")).statusCode, 410);
   assert.equal((await app.inject("/v1/media/background/12345678?expires=1&signature=bad")).statusCode, 401);
+});
+
+test("a Google callback for a neighbouring service is handed over, not read as a home", async (t) => {
+  const { app } = fixture(t);
+  const handed = await app.inject("/oauth/google/callback?code=abc&state=6f1b0c2e-1111-4222-8333-444455556666");
+  assert.equal(handed.statusCode, 302);
+  assert.equal(handed.headers.location, "http://127.0.0.1:8003/api/callback?code=abc&state=6f1b0c2e-1111-4222-8333-444455556666");
+  const mine = await app.inject("/oauth/google/callback?code=abc&state=6f1b0c2e-1111-4222-8333-444455556666.token");
+  assert.equal(mine.statusCode, 404);
 });

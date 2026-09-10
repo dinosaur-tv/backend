@@ -6,10 +6,11 @@ const configSchema = z.object({
   PUBLIC_BASE_URL: z.string().url(),
   TOKEN_ENCRYPTION_KEY: z.string().min(1),
   DEVICE_TOKEN: z.union([z.literal(""), z.string().min(32)]).default(""),
-  OAUTH_CONNECT_TOKEN: z.string().optional(), // Legacy configuration; URL authentication has been removed.
   // The dashboard can start before Calendar OAuth is configured.
   GOOGLE_CLIENT_ID: z.string().optional().transform((value) => value?.trim() || undefined),
   GOOGLE_CLIENT_SECRET: z.string().optional().transform((value) => value?.trim() || undefined),
+  // Where to send Google callbacks that are not ours, when another local service shares this redirect URI.
+  OAUTH_FORWARD_URL: z.string().url().optional(),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(16),
   TELEGRAM_ALLOWED_USER_IDS: z.string().default(""),

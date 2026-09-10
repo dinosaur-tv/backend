@@ -104,8 +104,16 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
   app.get("/oauth/google/start", async (_, reply) => reply.code(410).send({ error: "Подключите календарь в приложении: Ещё → Календари" }));
   app.get("/oauth/google/callback", async (request, reply) => {
     const query = z.object({ state: z.string().max(200), code: z.string().min(1).max(4096) }).parse(request.query);
-    const id = idSchema.parse(query.state.split(".")[0]);
-    return forward(id, request, reply);
+    // Ours always reads "<ID дома>.<токен>". Другой сервис может делить этот redirect URI.
+    const [prefix, token] = query.state.split(".");
+    if (!token || !idSchema.safeParse(prefix).success) {
+      if (!config.OAUTH_FORWARD_URL) return fail(400, "Этот ответ Google не относится к Dino TV");
+      const target = new URL(config.OAUTH_FORWARD_URL);
+      target.searchParams.set("code", query.code);
+      target.searchParams.set("state", query.state);
+      return reply.redirect(target.toString());
+    }
+    return forward(prefix, request, reply);
   });
   app.get("/v1/miniapp/households", async (request) => {
     const userId = telegram(request);
