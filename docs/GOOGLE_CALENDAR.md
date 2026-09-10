@@ -7,7 +7,7 @@
    - Главная: `https://api.example.com/`
    - Конфиденциальность: `https://api.example.com/privacy`
    - Условия: `https://api.example.com/terms`
-3. Audience → External. В режиме Testing добавьте Google-адреса участников в Test users.
+3. Audience → External. В режиме Testing добавьте Google-адреса участников в Test users; для посторонних нужна публикация — см. ниже.
 4. Data Access → Add or remove scopes:
    - `https://www.googleapis.com/auth/calendar.events.readonly`
    - `https://www.googleapis.com/auth/calendar.calendarlist.readonly`
@@ -35,6 +35,20 @@ OAuth-ссылка одноразовая, действует 15 минут. С�
 
 «Отключить» удаляет локальный токен и кэш. Полный отзыв разрешения — в Google Account → сторонние подключения.
 
-В режиме Testing refresh token для Calendar обычно истекает через **7 дней**. Для постоянного/публичного использования проверьте требования Google к публикации и верификации. Публикация исходников не заменяет эту процедуру.
+## Публикация и верификация
+
+Пока приложение в статусе **Testing**, войти могут только адреса из Test users, а refresh token живёт **7 дней** — календарь придётся переподключать каждую неделю. Это и мешает пускать посторонних.
+
+Порядок действий:
+
+1. **Audience → Publish app.** Статус меняется на In production. Ограничение в 7 дней снимается сразу, список Test users больше не нужен.
+2. Пока верификация не пройдена, на экране согласия показывается предупреждение «Google hasn't verified this app» и действует лимит около 100 пользователей. Работать это не мешает, выглядит пугающе.
+3. **Подтвердите домен.** Google Search Console → добавьте `example.com` и подтвердите владение. Домен ссылок из Branding должен совпадать с подтверждённым.
+4. **Branding.** Название, логотип, адрес поддержки и три ссылки, которые уже отдаёт сам сервер: `/`, `/privacy`, `/terms`.
+5. **Prepare for verification → Submit.** Google попросит видео на YouTube: показать адресную строку с вашим доменом, вход, экран согласия со списком запрошенных доступов и то, ради чего они нужны — расписание на экране.
+
+Оба используемых доступа (`calendar.events.readonly`, `calendar.calendarlist.readonly`) относятся к **sensitive**, а не restricted: независимый аудит безопасности (CASA) для них не требуется. Проверка обычно занимает от нескольких дней до нескольких недель, Google может задать уточняющие вопросы.
+
+Публикация исходников верификацию не заменяет.
 
 [Правила OAuth](https://developers.google.com/identity/protocols/oauth2) · [Web-подключение](https://developers.google.com/identity/protocols/oauth2/web-server)

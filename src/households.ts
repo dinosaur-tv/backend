@@ -233,7 +233,10 @@ export class Households {
     this.transaction(() => {
       const owners = [...this.config.allowedTelegramUsers];
       const legacyPath = join(this.dir, "state.enc");
-      if (existsSync(legacyPath) && !owners.length) throw new Error("Для переноса старого дома задайте TELEGRAM_ALLOWED_USER_IDS");
+      // Refusing to start beats importing the old home with nobody able to open it.
+      if (existsSync(legacyPath) && !owners.length) {
+        throw new Error("Найден data/state.enc от прежней однодомной установки. Укажите в TELEGRAM_ALLOWED_USER_IDS свой Telegram ID — он станет владельцем перенесённого дома. Если старый дом не нужен, уберите data/state.enc и запустите снова.");
+      }
       if (owners.length) {
         const state = new EncryptedStore(legacyPath, this.config.TOKEN_ENCRYPTION_KEY).read();
         const tvSession = state.tvSession;
