@@ -21,6 +21,7 @@ export function handleTelegramCommand(
   text: string,
   update: (mutator: (state: StoredState) => void) => StoredState,
   connected: { misha: boolean; natasha: boolean },
+  labels = { misha: "Участник 1", natasha: "Участник 2" },
 ): TelegramReply {
   const normalizedText = quickCommands[text.trim()] ?? text.trim();
   const [commandWithBot, ...argumentsList] = normalizedText.split(/\s+/);
@@ -94,7 +95,7 @@ export function handleTelegramCommand(
   }
   if (command === "/status") {
     return {
-      text: `Календари: Миша — ${connected.misha ? "на связи" : "ещё не подключён"}; Наташа — ${connected.natasha ? "на связи" : "ещё не подключена"}. Если что-то молчит — откройте консоль, там это видно сразу.`,
+      text: `Календари: ${labels.misha} — ${connected.misha ? "на связи" : "ещё не подключён"}; ${labels.natasha} — ${connected.natasha ? "на связи" : "ещё не подключён"}. Подключение и выбор календарей — в консоли, раздел «Ещё».`,
     };
   }
   if (command === "/home" || command === "/start") {

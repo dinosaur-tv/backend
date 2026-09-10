@@ -34,9 +34,13 @@ test("keeps the last volume when the television omits it", () => {
   assert.equal(desk.snapshot().nowPlaying?.volumePercent, 40);
 });
 
-test("an empty report from the television clears the desk", () => {
-  const desk = new MusicDesk();
+test("an empty report from the television clears the desk after it goes stale", () => {
+  let now = 1_000;
+  const desk = new MusicDesk(undefined, () => now);
   desk.hearFromTv({ title: "GANG", artist: "Индаблэк", isPlaying: true });
+  desk.hearFromTv({ title: "  " });
+  assert.equal(desk.snapshot().nowPlaying?.title, "GANG");
+  now = 22_000;
   desk.hearFromTv({ title: "  " });
   assert.equal(desk.snapshot().nowPlaying, undefined);
 });

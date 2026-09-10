@@ -1,0 +1,11 @@
+services:
+  dino-home:
+    build: ../app
+    restart: unless-stopped
+    depends_on:
+      - dino-backend
+    networks:
+      - dino
+  caddy:
+    volumes:
+      - ./Caddyfile.fullstack:/etc/caddy/Caddyfile:ro

@@ -1,0 +1,7 @@
+{$API_DOMAIN} {
+    reverse_proxy dino-backend:3000
+}
+
+{$HOME_DOMAIN} {
+    reverse_proxy dino-home:80
+}

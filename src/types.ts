@@ -15,6 +15,7 @@ export const displayMoods = ["home", "night", "play"] as const;
 export type DisplayMood = (typeof displayMoods)[number];
 
 export interface OAuthConnection {
+  userId?: string;
   refreshToken: string;
   calendarIds: string[];
   connectedAt: string;
@@ -94,6 +95,7 @@ export interface DisplaySettings {
 }
 
 export interface StoredPairing {
+  kind?: "tv" | "home";
   pairId: string;
   code: string;
   session?: string;
@@ -101,6 +103,9 @@ export interface StoredPairing {
 }
 
 export interface StoredState {
+  personLabels?: Record<Person, string>;
+  oauthStates?: Record<string, { person: Person; userId?: string; version?: number; expiresAt: number }>;
+  oauthVersions?: Partial<Record<Person, number>>;
   oauth: Partial<Record<Person, OAuthConnection>>;
   display: DisplaySettings;
   tvSession?: string;

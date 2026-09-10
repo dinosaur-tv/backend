@@ -1,108 +1,63 @@
-# Dino TV backend
+# Dino TV · backend
 
-Приватный сервис для одного дома: подключает Google Calendar Миши и Наташи, получает погоду Санкт-Петербурга, принимает команды Telegram и отдаёт телевизору защищённый снимок данных. Разворачивается на небольшом VPS в Docker.
+API, Telegram-бот, Google Calendar и настройки экрана. Node.js 22, TypeScript, Docker.
 
-## До первого запуска
+**Один экземпляр обслуживает много независимых домов.** У каждого дома свои участники, календари, устройства и настройки; данные соседей недоступны. Открытая регистрация включается флагом — см. [общий сервер](docs/HOSTED_SERVICE.md).
 
-- VPS с Ubuntu 24.04+ и публичным IPv4;
-- домен или поддомен, например `api.dym-dino.ru`, с A-записью на IP VPS;
-- открытые TCP-порты `80` и `443`;
-- Docker Engine и Docker Compose plugin на VPS;
-- Telegram bot token из @BotFather.
+## Установка на VPS
 
-Caddy сам выпустит и обновит HTTPS-сертификат, когда DNS уже будет указывать на VPS.
-
-## Ссылки для Google Auth Platform
-
-После публикации с `API_DOMAIN=api.dym-dino.ru` пропишите в Google Auth Platform → Branding:
-
-| Поле | Значение |
-| --- | --- |
-| Application home page | `https://api.dym-dino.ru/` |
-| Application privacy policy link | `https://api.dym-dino.ru/privacy` |
-| Application terms of service link | `https://api.dym-dino.ru/terms` |
-
-Это три общедоступные страницы Dino TV: они не требуют авторизации и не показывают персональные данные.
-
-## Развёртывание
-
-Для VPS с уже работающим Traefik используйте `docker-compose.traefik.yml`: он не открывает порты сам, а подключает Dino TV к существующей reverse-proxy сети. Имя этой Docker-сети задаётся в `TRAEFIK_NETWORK` (на целевом сервере — `proxy`). В случае с самостоятельным сервером без Traefik оставьте исходный `docker-compose.yml` — он использует Caddy.
-
-Загрузите на VPS **только эту папку `backend/`**, затем создайте отдельного пользователя для развёртывания. Установите Docker, подготовьте свой SSH-ключ и один раз под root выполните:
+Нужны Docker Compose, домен, DNS на VPS и свободные порты 80/443. Репозитории `backend` и `app` разместите рядом.
 
 ```bash
-sudo bash scripts/provision-dino-user.sh 'ssh-ed25519 ВАШ_ПУБЛИЧНЫЙ_КЛЮЧ dino-tv'
-```
-
-В новом терминале проверьте, что вход под `dino-d` и `sudo` работают. Только после успешной проверки закройте root-вход и парольную авторизацию:
-
-```bash
-sudo bash scripts/lock-root-ssh.sh
-```
-
-Дальше уже под `dino-d`:
-
-```bash
-cd backend
 cp .env.example .env
-nano .env
-docker compose -f docker-compose.traefik.yml up -d --build
-docker compose -f docker-compose.traefik.yml logs -f dino-backend
+openssl rand -base64 32   # TOKEN_ENCRYPTION_KEY
+openssl rand -hex 32      # TELEGRAM_WEBHOOK_SECRET
+# Заполните .env своими доменами и секретами.
+mkdir -p data
+sudo chown 1000:1000 data
+chmod 700 data
+chmod 600 .env
+docker compose -f docker-compose.yml -f docker-compose.fullstack.yml up -d --build
 ```
 
-Проверьте `https://ваш-домен/health`. Секреты лежат только в `.env`, который исключён из git. OAuth refresh tokens находятся в `data/state.enc` и зашифрованы AES-256-GCM ключом `TOKEN_ENCRYPTION_KEY`. Перед запуском создайте в Cloudflare DNS A-запись `api.dym-dino.ru` на VPS и включите proxied-режим.
+Проверка: `https://api.example.com/health` и `https://home.example.com/console/`. HTTPS выдаёт Caddy.
 
-Конфигурация Traefik использует стандартные labels `Host(API_DOMAIN)`, `websecure`, TLS и внутренний порт `3000`. До запуска убедитесь, что имя внешней Docker-сети в `.env` действительно совпадает с сетью работающего Traefik; это единственное значение, зависящее от уже настроенных проектов на VPS.
+Существующий Traefik: используйте `docker-compose.traefik.yml` в обоих репозиториях, одну сеть и свои настройки TLS. Nginx направляет `/api/` к `dino-backend:3000`.
 
-Для `TOKEN_ENCRYPTION_KEY`, `DEVICE_TOKEN`, `OAUTH_CONNECT_TOKEN` и `TELEGRAM_WEBHOOK_SECRET` используйте `openssl rand -base64 32` или менеджер паролей. Не отправляйте их в чат.
+## Подключение
 
-## Google Calendar
+1. Создайте бота через @BotFather.
+2. В `.env` заполните токен бота, URL консоли и `REGISTRATION_OPEN`.
+3. Выполните `bash scripts/set-telegram-webhook.sh`.
+4. В личном чате с ботом: `/start` → приложение → «Создать дом» → введите код с телевизора.
+5. Второй человек: владелец даёт код приглашения («Ещё → Пригласить участника»), гость вводит его в «Ещё → Войти по приглашению».
+6. Телефон без Telegram: на авторизованном телефоне «Ещё → Код для моего телефона».
 
-Calendar API в проекте уже включён. Дальше:
+Google: [пошаговая настройка](docs/GOOGLE_CALENDAR.md). В приложении доступны подключение, выбор календарей и отключение.
 
-1. Google Auth Platform → **Data Access** → Add or remove scopes:
-   - `https://www.googleapis.com/auth/calendar.events.readonly`
-   - `https://www.googleapis.com/auth/calendar.calendarlist.readonly`
-2. Google Auth Platform → **Clients**: удалите старый `TV and Limited Input` client.
-3. Create client → **Web application**.
-4. В Authorized redirect URIs добавьте:
+Подписи двух календарей дом задаёт сам в «Ещё → Дом и участники». Внутренние ID `misha` / `natasha` сохранены для совместимости. Сейчас поддерживаются два календаря на дом и погода Петербурга.
 
-   ```text
-   https://api.example.com/oauth/google/callback
-   ```
+## Настройки и данные
 
-   где `api.example.com` — `API_DOMAIN` из `.env`.
-5. Впишите новый Client ID и Client Secret в `.env` на VPS. Не добавляйте их в Android-приложение.
+- `TV_REMOTE_ENABLED=false`: экспериментальные кнопки пульта и запуск приложений выключены. Для включения — `true` и перезапуск.
+- Настройки экрана и базовые медиакнопки работают отдельно от пульта.
+- Музыку воспроизводит Кинопоиск/другое приложение; Dino использует Android MediaSession.
+- Данные: `data/households.sqlite` и `data/backgrounds/<ID дома>/`. Сохраняйте резервную копию вместе с ключом шифрования.
+- Старый `data/state.enc` переносится в первый дом при первом запуске и дальше не используется. Не удаляйте его до проверки переноса.
+- Не заменяйте ключ шифрования без миграции: база перестанет читаться.
+- Перед обновлением сделайте резервную копию. Откат к старому небезопасному подключению по коду недопустим.
 
-После запуска откройте на личном устройстве:
-
-```text
-https://api.example.com/oauth/google/start?person=misha&key=OAUTH_CONNECT_TOKEN
-https://api.example.com/oauth/google/start?person=natasha&key=OAUTH_CONNECT_TOKEN
-```
-
-Замените `OAUTH_CONNECT_TOKEN` значением из `.env`; не публикуйте эти ссылки. Каждый входит в свой Google-аккаунт. Если нужны не primary-календари, в `.env` укажите их ID через запятую в `MISHA_CALENDAR_IDS` или `NATASHA_CALENDAR_IDS`.
-
-## Telegram
-
-1. Создайте бота в @BotFather и внесите token в `TELEGRAM_BOT_TOKEN`.
-2. В `TELEGRAM_ALLOWED_USER_IDS` внесите числовые Telegram user ID Миши и Наташи.
-3. После запуска установите webhook:
+## Разработка
 
 ```bash
-curl -F "url=https://api.example.com/v1/telegram/webhook" \
-     -F "secret_token=$TELEGRAM_WEBHOOK_SECRET" \
-     "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook"
+npm ci
+node --env-file=.env --import tsx src/server.ts
+npm run quality
+npm audit
+pre-commit install
+pre-commit run --all-files
 ```
 
-Или, после заполнения `.env`, выполните без вывода токенов:
+Тесты проверяют изоляцию домов, авторизацию, приглашения, отзыв доступа, OAuth-state, пульт и состояние экрана.
 
-```bash
-bash scripts/set-telegram-webhook.sh
-```
-
-Команды: `/today`, `/tomorrow`, `/week`, `/month`, `/theme gallery|home-day|home-evening|palace|oak-study|palace-study|night|play|forest|autumn-forest|mountains|sea|space|petersburg|petersburg-streets|oranienbaum|peterhof|rome|florence|venice|italy-sunset|rus|gzhel|soviet-carpet|byzantium|india|italy`, `/privacy on|off`, `/note текст`, `/status`. Старый `/now` остаётся алиасом для `/today`.
-
-## API для телевизора
-
-`GET /v1/display/snapshot` требует `Authorization: Bearer <DEVICE_TOKEN>` и возвращает погоду Петербурга, события на 31 день, владельца/цвет каждого события, выбранную тему и команды Telegram. Подключение endpoint к Android-приложению — следующий шаг после первого успешного запуска VPS.
+[Безопасность](SECURITY.md) · [Участие](CONTRIBUTING.md) · [MIT](LICENSE)

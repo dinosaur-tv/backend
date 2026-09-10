@@ -1,453 +1,232 @@
-import { createHash, timingSafeEqual } from "node:crypto";
-import { setDefaultResultOrder } from "node:dns";
-import { join } from "node:path";
-import Fastify from "fastify";
+import { randomBytes } from "node:crypto";
+import { join, resolve } from "node:path";
+import { rmSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import Fastify, { type FastifyRequest, type FastifyReply } from "fastify";
 import { z } from "zod";
-import { handleTelegramCommand } from "./commands.js";
-import { loadConfig } from "./config.js";
-import { GoogleCalendarService } from "./google.js";
-import { homeTokenAllowed, issueHomeToken, rememberHomeToken } from "./home-auth.js";
-import { BackgroundStore, MediaError } from "./media.js";
-import { PairingDesk } from "./pairing.js";
-import { EncryptedStore } from "./store.js";
+import { loadConfig, type Config } from "./config.js";
+import { createHomeApp } from "./home-app.js";
+import { Households, fail, type Access } from "./households.js";
+import { AttemptLimiter, mediaAllowed } from "./security.js";
 import { parseTelegramUpdate, telegramWebhookReply, verifiedTelegramWebAppUserId } from "./telegram.js";
-import { displayModes, displayMoods, displayThemes, liveNote, normalizeRotation, noteDurationsMin, noteExpiresAt, parseNoteMinutes, people, type DisplayMood, type DisplayTheme, type SnapshotEvent, type WeatherSnapshot } from "./types.js";
-import { MusicDesk, musicActions } from "./music.js";
-import { TvDesk, tvApps, tvKeys } from "./tv-command.js";
-import { parseTvVisible, TvPresence } from "./tv-presence.js";
-import { fallbackWeather, saintPetersburgWeather } from "./weather.js";
+import { people, type Person } from "./types.js";
 
-setDefaultResultOrder("ipv4first");
+const idSchema = z.string().uuid();
+const codeSchema = z.object({ code: z.string().regex(/^(?:\d{6}|\d{10})$/) });
+const first = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] : value;
 
-const config = loadConfig();
-const dataDir = join(process.cwd(), "data");
-const store = new EncryptedStore(join(dataDir, "state.enc"), config.TOKEN_ENCRYPTION_KEY);
-const backgrounds = new BackgroundStore(join(dataDir, "backgrounds"));
-const calendars = new GoogleCalendarService(config, store);
-const pairing = new PairingDesk({
-  load: () => store.read().pairings ?? [],
-  save: (pairings) => {
-    store.update((state) => {
-      state.pairings = pairings;
-    });
-  },
-});
-const music = new MusicDesk(config.YANDEX_MUSIC_TOKEN);
-const tvDesk = new TvDesk();
-const tvPresence = new TvPresence();
-const app = Fastify({ logger: true, trustProxy: true, bodyLimit: 4_000_000 });
-const feedTtlMs = 45_000;
-let cachedWeather: WeatherSnapshot = fallbackWeather();
-let cachedEvents: SnapshotEvent[] = [];
-let feedUpdatedAt = 0;
-let feedRefresh: Promise<void> | null = null;
-
-async function refreshLivingRoomFeed(): Promise<void> {
-  if (feedRefresh) return feedRefresh;
-  feedRefresh = (async () => {
-    const [weatherResult, eventsResult] = await Promise.allSettled([
-      saintPetersburgWeather(),
-      calendars.eventsForNextMonth(),
-    ]);
-    if (weatherResult.status === "rejected") app.log.warn({ err: weatherResult.reason }, "weather fetch failed");
-    else cachedWeather = weatherResult.value;
-    if (eventsResult.status === "rejected") app.log.warn({ err: eventsResult.reason }, "calendar fetch failed");
-    else cachedEvents = eventsResult.value;
-    feedUpdatedAt = Date.now();
-  })().finally(() => { feedRefresh = null; });
-  return feedRefresh;
-}
-
-async function livingRoomFeed(): Promise<void> {
-  if (!feedUpdatedAt) await refreshLivingRoomFeed();
-  else if (Date.now() - feedUpdatedAt > feedTtlMs) void refreshLivingRoomFeed();
-}
-
-app.addHook("onRequest", async (request, reply) => {
-  const origin = request.headers.origin;
-  if (origin !== config.MINI_APP_ORIGIN) return;
-  reply.header("Access-Control-Allow-Origin", origin);
-  reply.header("Access-Control-Allow-Headers", "content-type, authorization, x-telegram-init-data, x-dino-visible, x-dino-home-token");
-  reply.header("Access-Control-Allow-Methods", "GET, PATCH, POST, OPTIONS");
-  reply.header("Vary", "Origin");
-  if (request.method === "OPTIONS") return reply.code(204).send();
-});
-
-app.get("/health", async () => ({ ok: true, service: "dino-tv-backend", time: new Date().toISOString() }));
-
-app.get("/", async (_, reply) => reply.type("text/html").send(publicPage("Dino TV", `
-  <p class="eyebrow">Private household display</p>
-  <h1>Ваш дом —<br>в одном красивом экране.</h1>
-  <p class="lead">Dino TV показывает время, погоду Санкт-Петербурга, общий ритм двух календарей и настроение гостиной.</p>
-  <p class="note">Это частное приложение для одного дома, не публичный сервис.</p>
-`)));
-
-app.get("/privacy", async (_, reply) => reply.type("text/html").send(publicPage("Политика конфиденциальности", `
-  <p class="eyebrow">Dino TV · privacy</p>
-  <h1>Политика<br>конфиденциальности</h1>
-  <p class="lead">Обновлено 7 сентября 2026 года.</p>
-  <h2>Какие данные использует Dino TV</h2>
-  <p>Приложение получает только события Google Calendar, к которым каждый владелец аккаунта дал явное разрешение: название, время и календарь события. Для экрана также запрашивается публичный прогноз погоды Санкт-Петербурга. Фон экрана загружает только человек из дома.</p>
-  <h2>Зачем</h2>
-  <p>Данные используются исключительно для показа домашнего расписания на телевизоре и выполнения команд авторизованных участников через Telegram.</p>
-  <h2>Хранение и защита</h2>
-  <p>Токены доступа Google хранятся на личном сервере владельца в зашифрованном виде. Доступ к Telegram-управлению ограничен заранее заданными пользовательскими ID. Мы не продаём данные, не используем рекламу и не передаём календарные данные третьим лицам.</p>
-  <h2>Удаление доступа</h2>
-  <p>Разрешение можно отозвать в настройках Google Account в любой момент. После этого Dino TV больше не сможет читать календарь этого аккаунта.</p>
-`)));
-
-app.get("/terms", async (_, reply) => reply.type("text/html").send(publicPage("Условия использования", `
-  <p class="eyebrow">Dino TV · terms</p>
-  <h1>Условия<br>использования</h1>
-  <p class="lead">Обновлено 7 сентября 2026 года.</p>
-  <h2>Назначение</h2>
-  <p>Dino TV — приватное домашнее приложение для отображения времени, погоды, событий календаря и выбранного фона на экране в гостиной.</p>
-  <h2>Учётные записи</h2>
-  <p>Каждый пользователь сам подключает свой Google Calendar и может в любой момент отозвать доступ. Владелец домашнего сервера отвечает за сохранность доступа к нему, настройку Telegram-бота и список людей, которым разрешено управление.</p>
-  <h2>Ограничения</h2>
-  <p>Сведения на экране предоставляются для удобства и могут обновляться с задержкой. Dino TV не является календарным, погодным или музыкальным сервисом и не гарантирует доступность данных сторонних платформ.</p>
-`)));
-
-app.get("/oauth/google/start", async (request, reply) => {
-  if (!calendars.isConfigured()) return reply.code(503).send("Google Calendar OAuth is not configured yet");
-  const query = z.object({ person: z.enum(people), key: z.string().min(32) }).parse(request.query);
-  if (query.key !== config.OAUTH_CONNECT_TOKEN) return reply.code(401).send("Unauthorized");
-  return reply.redirect(calendars.authorizationUrl(query.person));
-});
-
-app.get("/oauth/google/callback", async (request, reply) => {
-  const query = z.object({ code: z.string().min(1), state: z.string().min(1) }).parse(request.query);
-  const person = await calendars.completeAuthorization(query.code, query.state);
-  return reply.type("text/html").send(`<!doctype html><title>Dino TV</title><h1>Готово</h1><p>Календарь «${person === "misha" ? "Миша" : "Наташа"}» подключён. Можно закрыть эту страницу.</p>`);
-});
-
-app.get("/v1/display/snapshot", async (request, reply) => {
-  requireDisplayAccess(request.headers.authorization);
-  tvPresence.touch(parseTvVisible(firstHeader(request.headers["x-dino-visible"])));
-  await livingRoomFeed();
-  const state = store.read();
-  const note = liveNote(state.display.note);
-  return reply.header("Cache-Control", "no-store").send({
-    generatedAt: new Date().toISOString(),
-    timezone: "Europe/Moscow",
-    weather: cachedWeather,
-    days: groupByDay(cachedEvents),
-    display: {
-      ...state.display,
-      note,
-      backgroundUrl: state.display.background ? `${config.PUBLIC_BASE_URL}/v1/media/background/${state.display.background.id}` : undefined,
-    },
-    reloadAt: state.tvReloadAt,
-    power: state.tvPower === "off" ? "off" : "on",
-    powerAt: state.tvPowerAt,
-    nowPlaying: music.snapshot().nowPlaying ?? null,
-    music: { connected: music.snapshot().connected },
-    musicCommand: music.snapshot().command ?? null,
-    tvCommand: tvDesk.snapshot().command ?? null,
-    tvCommands: tvDesk.snapshot().commands,
-    connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
-    tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
-    inviteCode: pairing.waitingCode(),
+/** Публичный шлюз: аутентификация, членство и назначение дома до доступа к любому сервису. */
+export function createApp(config: Config, dataDir = join(process.cwd(), "data")) {
+  const homes = new Households(dataDir, config);
+  const instances = new Map<string, ReturnType<typeof createHomeApp>>();
+  const internalToken = randomBytes(32).toString("base64url");
+  const attempts = new AttemptLimiter();
+  const app = Fastify({
+    logger: { serializers: { req: (req) => ({ method: req.method, url: req.url?.split("?")[0] }) } },
+    trustProxy: config.TRUST_PROXY ? config.TRUST_PROXY.split(",").map((v) => v.trim()) : false,
+    bodyLimit: 4_000_000,
   });
-});
-
-app.post("/v1/display/pair/start", async () => {
-  const started = pairing.start();
-  return { pairId: started.pairId, code: started.code, expiresIn: 600 };
-});
-
-app.get("/v1/display/pair/wait", async (request) => {
-  const query = z.object({ pairId: z.string().min(8) }).parse(request.query);
-  return pairing.status(query.pairId);
-});
-
-app.get("/v1/media/background/:id", async (request, reply) => {
-  const params = z.object({ id: z.string().min(8) }).parse(request.params);
-  const file = backgrounds.read(params.id);
-  if (!file) return reply.code(404).send({ error: "Not found" });
-  return reply
-    .header("Cache-Control", "public, max-age=31536000, immutable")
-    .type(file.mime)
-    .send(file.buffer);
-});
-
-app.post("/v1/display/now-playing", async (request) => {
-  requireDisplayAccess(request.headers.authorization);
-  music.hearFromTv(request.body);
-  return { ok: true, nowPlaying: music.snapshot().nowPlaying ?? null };
-});
-
-app.get("/v1/miniapp/state", async (request) => {
-  requireMiniAppUser(request);
-  const state = store.read();
-  return {
-    display: {
-      ...state.display,
-      note: liveNote(state.display.note),
-      backgroundUrl: state.display.background ? `${config.PUBLIC_BASE_URL}/v1/media/background/${state.display.background.id}` : undefined,
-    },
-    connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
-    weatherCity: "Санкт-Петербург",
-    tvLinked: Boolean(state.tvLinked),
-    ...tvView(state),
-    tvUrl: `${config.MINI_APP_ORIGIN}/tv/#${store.tvSession()}`,
-    nowPlaying: music.snapshot().nowPlaying ?? null,
-    music: { connected: music.snapshot().connected },
-  };
-});
-
-app.patch("/v1/miniapp/display", async (request) => {
-  requireMiniAppUser(request);
-  const body = z.object({
-    mode: z.enum(displayModes).optional(),
-    theme: z.enum(displayThemes).optional(),
-    mood: z.enum(displayMoods).optional(),
-    privacy: z.boolean().optional(),
-    showWeather: z.boolean().optional(),
-    showCalendar: z.boolean().optional(),
-    note: z.string().trim().min(1).max(180).optional(),
-    noteMinutes: z.number().int().refine((value) => (noteDurationsMin as readonly number[]).includes(value)).optional(),
-    clearNote: z.boolean().optional(),
-    clearBackground: z.boolean().optional(),
-    reloadTv: z.boolean().optional(),
-    tvPower: z.enum(["on", "off"]).optional(),
-    rotation: z.object({
-      enabled: z.boolean().optional(),
-      seconds: z.number().optional(),
-      interval: z.number().optional(),
-      now: z.number().optional(),
-      today: z.number().optional(),
-      tomorrow: z.number().optional(),
-      week: z.number().optional(),
-    }).optional(),
-  }).parse(request.body);
-  if (body.clearNote && body.note) throw Object.assign(new Error("Choose note or clearNote"), { statusCode: 400 });
-  const updated = store.update((state) => {
-    if (body.mode) state.display.mode = body.mode;
-    if (body.theme === "night" || body.theme === "play") {
-      state.display.mood = body.theme;
-    } else if (body.theme) {
-      state.display.theme = body.theme as DisplayTheme;
-      state.display.mood = "home";
+  function household(id: string) {
+    if (!homes.exists(id)) return fail(404, "Дом недоступен");
+    let instance = instances.get(id);
+    if (!instance) {
+      const legacy = homes.isLegacy(id);
+      const state = homes.state(id).read();
+      instance = createHomeApp({ ...config,
+        PERSON_1_NAME: state.personLabels?.misha ?? (legacy ? config.PERSON_1_NAME : "Участник 1"),
+        PERSON_2_NAME: state.personLabels?.natasha ?? (legacy ? config.PERSON_2_NAME : "Участник 2"),
+      }, homes.state(id), dataDir, id, internalToken);
+      instances.set(id, instance);
     }
-    if (body.mood) state.display.mood = body.mood as DisplayMood;
-    if (body.privacy !== undefined) state.display.privacy = body.privacy;
-    if (body.showWeather !== undefined) state.display.showWeather = body.showWeather;
-    if (body.showCalendar !== undefined) state.display.showCalendar = body.showCalendar;
-    if (body.note) {
-      state.display.note = { text: body.note, expiresAt: noteExpiresAt(parseNoteMinutes(body.noteMinutes)) };
-    }
-    if (body.clearNote) state.display.note = undefined;
-    if (body.clearBackground) {
-      backgrounds.remove(state.display.background?.id);
-      state.display.background = undefined;
-    }
-    if (body.reloadTv) state.tvReloadAt = new Date().toISOString();
-    if (body.tvPower) {
-      state.tvPower = body.tvPower;
-      state.tvPowerAt = new Date().toISOString();
-    }
-    if (body.rotation) {
-      state.display.rotation = normalizeRotation({ ...state.display.rotation, ...body.rotation });
-    }
-  });
-  return {
-    display: {
-      ...updated.display,
-      note: liveNote(updated.display.note),
-      backgroundUrl: updated.display.background ? `${config.PUBLIC_BASE_URL}/v1/media/background/${updated.display.background.id}` : undefined,
-    },
-    ...tvView(updated),
-    nowPlaying: music.snapshot().nowPlaying ?? null,
-    music: { connected: music.snapshot().connected },
-  };
-});
-
-app.post("/v1/miniapp/music", async (request) => {
-  requireMiniAppUser(request);
-  const body = z.object({
-    action: z.enum(musicActions),
-    volume: z.number().min(0).max(100).optional(),
-  }).parse(request.body);
-  if (body.action === "toTv") {
-    const updated = store.update((state) => {
-      state.tvPower = "on";
-      state.tvPowerAt = new Date().toISOString();
+    return instance;
+  }
+  function telegram(request: FastifyRequest): string | undefined {
+    if (!config.TELEGRAM_BOT_TOKEN) return;
+    const id = verifiedTelegramWebAppUserId(first(request.headers["x-telegram-init-data"]), config.TELEGRAM_BOT_TOKEN);
+    return id ? String(id) : undefined;
+  }
+  function requireTelegram(request: FastifyRequest): string {
+    return telegram(request) ?? fail(401, "Откройте мини-приложение из Telegram-бота");
+  }
+  function access(request: FastifyRequest): Access {
+    const selected = first(request.headers["x-dino-home-id"]);
+    if (selected) idSchema.parse(selected);
+    const userId = telegram(request);
+    if (userId) return homes.access(userId, selected);
+    // Неверная подпись не может незаметно переключить пользователя на другой способ входа.
+    if (request.headers["x-telegram-init-data"]) return fail(401, "Откройте мини-приложение заново из бота");
+    const auth = homes.device(first(request.headers["x-dino-home-token"]), "phone");
+    if (selected && auth.homeId !== selected) fail(403, "Телефон привязан к другому дому");
+    return auth;
+  }
+  function tvAccess(request: FastifyRequest) {
+    const token = request.headers.authorization?.startsWith("Bearer ") ? request.headers.authorization.slice(7) : undefined;
+    const auth = homes.device(token, "tv");
+    const selected = first(request.headers["x-dino-home-id"]);
+    if (selected && selected !== auth.homeId) fail(403, "Телевизор привязан к другому дому");
+    return auth;
+  }
+  async function forward(homeId: string, request: FastifyRequest, reply: FastifyReply, url = request.url, recheck?: () => unknown) {
+    const response = await household(homeId).inject({ method: request.method as "GET" | "POST" | "PATCH", url,
+      headers: { "content-type": "application/json", "x-dino-internal": internalToken,
+        "x-dino-visible": first(request.headers["x-dino-visible"]) ?? "true",
+        ...(url === "/v1/miniapp/calendars/connect" ? { "x-dino-actor": access(request).userId } : {}),
+        "x-telegram-bot-api-secret-token": config.TELEGRAM_WEBHOOK_SECRET },
+      ...(request.body !== undefined ? { payload: JSON.stringify(request.body) } : {}),
     });
-    return {
-      nowPlaying: music.snapshot().nowPlaying ?? null,
-      music: { connected: music.snapshot().connected },
-      ...tvView(updated),
-    };
+    recheck?.();
+    reply.code(response.statusCode).type(String(response.headers["content-type"] ?? "application/json"));
+    if (url.split("?")[0] === "/v1/miniapp/state" && response.statusCode === 200) {
+      const auth = access(request), data = response.json();
+      return reply.send({ ...data, household: homes.list(auth.userId).find((home) => home.id === homeId), permissions: { manageHome: auth.role === "owner", manageCalendars: Object.fromEntries(people.map((person) => [person, homes.calendarAccess(auth, person)])) } });
+    }
+    return reply.send(response.rawPayload);
   }
-  const result = await music.command(body.action, body.volume);
-  return {
-    nowPlaying: result.nowPlaying ?? null,
-    music: { connected: result.connected },
-    ...tvView(),
-  };
-});
-
-app.post("/v1/miniapp/tv", async (request) => {
-  requireMiniAppUser(request);
-  const body = z.union([
-    z.object({ action: z.literal("launch"), app: z.enum(tvApps) }),
-    z.object({ action: z.literal("key"), key: z.enum(tvKeys) }),
-  ]).parse(request.body);
-  const command = body.action === "launch" ? tvDesk.launch(body.app) : tvDesk.key(body.key);
-  let powerState = store.read();
-  if (body.action === "launch" && body.app === "kinopoisk") {
-    powerState = store.update((state) => {
-      state.tvPower = "off";
-      state.tvPowerAt = new Date().toISOString();
-    });
-  }
-  if (body.action === "launch" && body.app === "dino") {
-    powerState = store.update((state) => {
-      state.tvPower = "on";
-      state.tvPowerAt = new Date().toISOString();
-    });
-  }
-  return {
-    ok: true,
-    tvCommand: command,
-    ...tvView(powerState),
-  };
-});
-
-app.post("/v1/miniapp/background", async (request) => {
-  requireMiniAppUser(request);
-  const body = z.object({ image: z.string().min(32) }).parse(request.body);
-  const saved = backgrounds.save(body.image);
-  const updated = store.update((state) => {
-    backgrounds.remove(state.display.background?.id);
-    state.display.background = saved;
+  app.addHook("onRequest", async (request, reply) => {
+    reply.header("Cache-Control", "no-store").header("Referrer-Policy", "no-referrer").header("X-Content-Type-Options", "nosniff");
+    if (request.headers.origin === config.MINI_APP_ORIGIN) {
+      reply.header("Access-Control-Allow-Origin", config.MINI_APP_ORIGIN).header("Vary", "Origin")
+        .header("Access-Control-Allow-Headers", "content-type, authorization, x-telegram-init-data, x-dino-visible, x-dino-home-token, x-dino-home-id")
+        .header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+      if (request.method === "OPTIONS") return reply.code(204).send();
+    }
+    const path = request.url.split("?")[0];
+    if (!attempts.allow("ip:" + request.ip, 360, 60_000)) return reply.code(429).header("Retry-After", "60").send({ error: "Слишком много запросов" });
+    if (path.endsWith("/approve") || path.endsWith("/join")) {
+      if (!attempts.allow("code:" + request.ip, 5, 600_000) || !attempts.allow("codes-global", 100, 600_000)) return reply.code(429).header("Retry-After", "600").send({ error: "Подождите перед повторным вводом кода" });
+    }
+    if (path.endsWith("/start") && !attempts.allow("start:" + request.ip, 10, 60_000)) return reply.code(429).send({ error: "Слишком много попыток привязки" });
   });
-  return {
-    display: {
-      ...updated.display,
-      backgroundUrl: `${config.PUBLIC_BASE_URL}/v1/media/background/${saved.id}`,
-    },
-  };
-});
-
-app.post("/v1/miniapp/pair/invite", async (request) => {
-  requireMiniAppUser(request);
-  const started = pairing.start();
-  return { code: started.code, expiresIn: 600 };
-});
-
-app.post("/v1/miniapp/pair/approve", async (request) => {
-  const body = z.object({ code: z.string().regex(/^\d{6}$/) }).parse(request.body);
-  if (!pairing.approve(body.code, store.tvSession())) {
-    throw Object.assign(new Error("Не нашёл такой код. Возьмите свежий на телевизоре или на другом телефоне."), { statusCode: 404 });
-  }
-  const issued = issueHomeToken();
-  store.update((state) => {
-    state.tvLinked = true;
-    state.homeTokens = rememberHomeToken(state.homeTokens, issued.hash);
+  app.get("/health", async () => ({ ok: true, service: "dino-tv-backend" }));
+  app.get("/", async (_, reply) => reply.type("text/html").send(publicPage("Dino TV", "Ваш домашний экран", "Создайте свой дом в Telegram-боте, подключите календари и привяжите телевизор. У каждого дома отдельные участники, настройки и устройства.")));
+  app.get("/privacy", async (_, reply) => reply.type("text/html").send(publicPage("Конфиденциальность", "Ваши данные", "Сервис хранит Telegram ID, членство в домах, настройки, загруженные фоны и зашифрованные токены Google. События календарей и сведения о музыке доступны участникам вашего дома и привязанным устройствам. Календари используются только для домашнего расписания, не для рекламы. Владелец сервера имеет административный доступ к хранилищу. Отключить Google можно в приложении или в аккаунте Google. Владелец дома может удалить дом и его активные данные. Копии резервного хранения удаляет оператор сервера по своей политике. Не подключайте личные календари к серверу, оператору которого вы не доверяете.")));
+  app.get("/terms", async (_, reply) => reply.type("text/html").send(publicPage("Условия", "Использование Dino TV", "Владелец дома отвечает за приглашения и привязку устройств: участники видят общее расписание. Сведения могут обновляться с задержкой. Работа Google, Telegram и телевизора зависит от сторонних сервисов. Это домашний экран, а не система критических уведомлений.")));
+  app.get("/oauth/google/start", async (_, reply) => reply.code(410).send({ error: "Подключите календарь в приложении: Ещё → Календари" }));
+  app.get("/oauth/google/callback", async (request, reply) => {
+    const query = z.object({ state: z.string().max(200), code: z.string().min(1).max(4096) }).parse(request.query);
+    const id = idSchema.parse(query.state.split(".")[0]);
+    return forward(id, request, reply);
   });
-  return { ok: true, homeToken: issued.token };
-});
-
-app.post("/v1/telegram/webhook", async (request, reply) => {
-  const secret = request.headers["x-telegram-bot-api-secret-token"];
-  if (secret !== config.TELEGRAM_WEBHOOK_SECRET) return reply.code(401).send({ ok: false });
-  const body = parseTelegramUpdate(request.body);
-  if (!body) {
-    app.log.warn("Ignored malformed Telegram update");
-    return reply.send({ ok: true });
-  }
-  const message = body.message;
-  if (!message?.text || !message.from || !config.allowedTelegramUsers.has(String(message.from.id))) {
-    return reply.send({ ok: true });
-  }
-  try {
-    const connected = store.read().oauth;
-    const response = handleTelegramCommand(message.text, (mutator) => store.update(mutator), {
-      misha: Boolean(connected.misha),
-      natasha: Boolean(connected.natasha),
-    });
-    return reply.send(telegramWebhookReply(message.chat.id, response, config.TELEGRAM_WEB_APP_URL));
-  } catch (error) {
-    app.log.warn({ err: error }, "Telegram command failed");
-    return reply.send({ ok: true });
-  }
-});
-
-function requireDisplayAccess(header: string | undefined): void {
-  const token = header?.startsWith("Bearer ") ? header.slice(7) : "";
-  const candidates = [config.DEVICE_TOKEN, store.tvSession()].filter(Boolean);
-  const received = createHash("sha256").update(token).digest();
-  const allowed = candidates.some((candidate) => {
-    const expected = createHash("sha256").update(candidate).digest();
-    return received.length === expected.length && timingSafeEqual(received, expected);
+  app.get("/v1/miniapp/households", async (request) => {
+    const userId = telegram(request);
+    if (userId) { const list = homes.list(userId); return { households: list, activeHomeId: list.length ? homes.access(userId).homeId : null, registrationOpen: config.REGISTRATION_OPEN, telegram: true }; }
+    const auth = access(request);
+    return { households: homes.list(auth.userId).filter((h) => h.id === auth.homeId), registrationOpen: false, telegram: false };
   });
-  if (!allowed) throw Object.assign(new Error("Unauthorized"), { statusCode: 401 });
+  app.post("/v1/miniapp/households", async (request) => {
+    const userId = requireTelegram(request);
+    if (!attempts.allow("new-home:" + userId, 5, 3600_000)) fail(429, "Слишком много новых домов за час");
+    const { name } = z.object({ name: z.string().trim().min(1).max(60) }).parse(request.body);
+    return { household: homes.create(userId, name) };
+  });
+  app.post("/v1/miniapp/households/select", async (request) => {
+    const { id } = z.object({ id: idSchema }).parse(request.body);
+    return homes.select(requireTelegram(request), id);
+  });
+  app.post("/v1/miniapp/households/join", async (request) => homes.join(requireTelegram(request), codeSchema.parse(request.body).code));
+  app.post("/v1/miniapp/households/invite", async (request) => homes.invite("member", access(request)));
+  app.get("/v1/miniapp/households/members", async (request) => ({ members: homes.members(access(request)) }));
+  app.delete("/v1/miniapp/households/members/:userId", async (request) => {
+    const { userId } = z.object({ userId: z.string().regex(/^\d{1,20}$/) }).parse(request.params);
+    const auth = access(request);
+    homes.removeMember(auth, userId);
+    const instance = instances.get(auth.homeId); instances.delete(auth.homeId); await instance?.close();
+    return { ok: true };
+  });
+  app.get("/v1/miniapp/households/devices", async (request) => ({ devices: homes.devices(access(request)) }));
+  app.delete("/v1/miniapp/households/devices/:id", async (request) => {
+    homes.revokeDevice(access(request), z.object({ id: idSchema }).parse(request.params).id); return { ok: true };
+  });
+  app.patch("/v1/miniapp/households/labels", async (request) => {
+    const auth = access(request); homes.owner(auth);
+    const labels = z.object({ misha: z.string().trim().min(1).max(60), natasha: z.string().trim().min(1).max(60) }).parse(request.body);
+    homes.state(auth.homeId).update((s) => { s.personLabels = labels; });
+    const instance = instances.get(auth.homeId); instances.delete(auth.homeId); await instance?.close();
+    return { ok: true };
+  });
+  app.delete("/v1/miniapp/households/current", async (request) => {
+    const auth = access(request); homes.owner(auth);
+    homes.delete(auth);
+    const instance = instances.get(auth.homeId); instances.delete(auth.homeId); await instance?.close();
+    const base = resolve(dataDir, "backgrounds"), target = resolve(base, idSchema.parse(auth.homeId));
+    if (target.startsWith(base + (process.platform === "win32" ? "\\" : "/"))) rmSync(target, { recursive: true, force: true });
+    return { ok: true };
+  });
+  app.post("/v1/display/pair/start", async () => homes.invite("tv"));
+  app.get("/v1/display/pair/wait", async (request) => homes.wait(z.object({ pairId: z.string().min(8).max(128) }).parse(request.query).pairId));
+  app.post("/v1/miniapp/pair/invite", async (request) => homes.invite("phone", access(request)));
+  app.post("/v1/miniapp/pair/approve", async (request) => {
+    const hasAuth = request.headers["x-telegram-init-data"] || request.headers["x-dino-home-token"];
+    const auth = hasAuth ? access(request) : undefined;
+    const result = homes.approve(codeSchema.parse(request.body).code, auth);
+    homes.state(result.householdId).update((s) => { s.tvLinked = true; });
+    return result;
+  });
+  app.post("/v1/miniapp/access/revoke", async (request) => {
+    const auth = access(request); homes.revokeAll(auth);
+    homes.state(auth.homeId).update((s) => { s.tvLinked = false; }); return { ok: true };
+  });
+  for (const route of [
+    { method: "GET", url: "/v1/display/snapshot" }, { method: "POST", url: "/v1/display/now-playing" },
+  ] as const) app.route({ ...route, handler: async (request, reply) => forward(tvAccess(request).homeId, request, reply, request.url, () => tvAccess(request)) });
+  // Только перечисленные маршруты достижимы снаружи. Внутренние заголовки клиента никогда не пересылаются.
+  for (const route of [
+    { method: "GET", url: "/v1/miniapp/state", owner: false },
+    { method: "PATCH", url: "/v1/miniapp/display", owner: false },
+    { method: "POST", url: "/v1/miniapp/music", owner: false },
+    { method: "POST", url: "/v1/miniapp/tv", owner: false },
+    { method: "POST", url: "/v1/miniapp/background", owner: false },
+    { method: "POST", url: "/v1/miniapp/calendars/connect", owner: true },
+    { method: "GET", url: "/v1/miniapp/calendars/:person", owner: true },
+    { method: "PATCH", url: "/v1/miniapp/calendars/:person", owner: true },
+    { method: "POST", url: "/v1/miniapp/calendars/disconnect", owner: true },
+  ] as const) app.route({ method: route.method, url: route.url, handler: async (request, reply) => {
+    const auth = access(request);
+    let person: Person | undefined;
+    if (route.owner) {
+      person = z.object({ person: z.enum(people) }).parse(request.method === "GET" || request.method === "PATCH" ? request.params : request.body).person;
+      if (!homes.calendarAccess(auth, person)) fail(403, "Этот календарь подключил другой участник");
+    }
+    if (request.method !== "GET" && !attempts.allow("write:" + auth.homeId, 120, 60_000)) fail(429, "Слишком много команд для этого дома");
+    return forward(auth.homeId, request, reply, request.url, () => { const current = access(request); if (person && !homes.calendarAccess(current, person)) fail(403, "Доступ к календарю изменился"); });
+  } });
+  app.get("/v1/media/background/:homeId/:id", async (request, reply) => {
+    const { homeId, id } = z.object({ homeId: idSchema, id: z.string().regex(/^[a-zA-Z0-9_-]{8,64}$/) }).parse(request.params);
+    const { expires, signature } = z.object({ expires: z.coerce.number(), signature: z.string().max(128) }).parse(request.query);
+    if (!mediaAllowed(homeId + "/" + id, expires, signature, config.TOKEN_ENCRYPTION_KEY)) fail(401, "Ссылка недействительна");
+    return forward(homeId, request, reply, "/v1/media/background/" + id + "?" + new URLSearchParams({ expires: String(expires), signature }));
+  });
+  app.get("/v1/media/background/:id", async (_, reply) => reply.code(401).send({ error: "Получите новую ссылку на фон" }));
+  app.post("/v1/telegram/webhook", async (request, reply) => {
+    if (request.headers["x-telegram-bot-api-secret-token"] !== config.TELEGRAM_WEBHOOK_SECRET) return reply.code(401).send({ ok: false });
+    const message = parseTelegramUpdate(request.body)?.message;
+    if (!message?.text || !message.from || message.chat.id !== message.from.id) return { ok: true };
+    const userId = String(message.from.id);
+    if (!attempts.allow("bot:" + userId, 30, 60_000)) return { ok: true };
+    const list = homes.list(userId);
+    if (!list.length) return telegramWebhookReply(message.chat.id, { openMiniApp: true, text: config.REGISTRATION_OPEN
+      ? "Привет! Давай настроим твой домашний экран. Открой приложение ниже: создай дом, подключи календарь и введи код с телевизора. Данные других домов тебе не видны."
+      : "Привет! Новые дома пока не создаём, но ты можешь принять приглашение в существующий дом. Открой приложение ниже." }, config.TELEGRAM_WEB_APP_URL);
+    if (/^\/(?:start|home|homes)(?:@\w+)?(?:\s|$)/i.test(message.text)) {
+      const selected = homes.access(userId);
+      const name = list.find((h) => h.id === selected.homeId)!.name;
+      return telegramWebhookReply(message.chat.id, { openMiniApp: true, text: `Сейчас управляем домом «${name}». Темы, календари и участники — в приложении. Там же можно переключить дом.` }, config.TELEGRAM_WEB_APP_URL);
+    }
+    return forward(homes.access(userId).homeId, request, reply);
+  });
+  app.setErrorHandler((error, _, reply) => {
+    const status = error instanceof z.ZodError ? 400 : (error as { statusCode?: number }).statusCode ?? 500;
+    app.log.warn({ statusCode: status }, "request failed");
+    reply.code(status).send({ error: status >= 500 ? "Сервис временно недоступен" : error instanceof z.ZodError ? "Проверьте введённые данные" : (error as Error).message });
+  });
+  app.addHook("onClose", async () => { await Promise.all([...instances.values()].map((instance) => instance.close())); instances.clear(); homes.close(); });
+  return app;
 }
-
-function tvView(state = store.read()) {
-  return {
-    tvOnline: tvPresence.online() && state.tvPower !== "off",
-    tvPower: state.tvPower === "off" ? "off" as const : "on" as const,
-  };
+function publicPage(title: string, heading: string, text: string) {
+  return `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{max-width:44rem;margin:8vh auto;padding:2rem;background:#191b18;color:#ece7da;font:18px/1.7 system-ui}h1{font:48px Georgia}a{color:#d1a466}nav{display:flex;gap:1rem}</style><nav><a href="/">Dino TV</a><a href="/privacy">Конфиденциальность</a><a href="/terms">Условия</a></nav><h1>${heading}</h1><p>${text}</p></html>`;
 }
-
-function firstHeader(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const config = loadConfig(), app = createApp(config);
+  app.listen({ port: config.PORT, host: "0.0.0.0" }).catch(() => { app.log.error("Не удалось запустить сервер"); process.exit(1); });
+  for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { void app.close(); });
 }
-
-function miniAppUserAllowed(request: { headers: Record<string, string | string[] | undefined> }): boolean {
-  const initData = firstHeader(request.headers["x-telegram-init-data"]);
-  const homeToken = firstHeader(request.headers["x-dino-home-token"]);
-  if (config.TELEGRAM_BOT_TOKEN) {
-    const userId = verifiedTelegramWebAppUserId(initData, config.TELEGRAM_BOT_TOKEN);
-    if (userId && config.allowedTelegramUsers.has(String(userId))) return true;
-  }
-  return homeTokenAllowed(homeToken, store.read().homeTokens ?? []);
-}
-
-function requireMiniAppUser(request: { headers: Record<string, string | string[] | undefined> }): void {
-  if (miniAppUserAllowed(request)) return;
-  const initData = firstHeader(request.headers["x-telegram-init-data"]);
-  const homeToken = firstHeader(request.headers["x-dino-home-token"]);
-  if (!initData && !homeToken) throw Object.assign(new Error("Введите код с телевизора во вкладке «Ещё»"), { statusCode: 401 });
-  throw Object.assign(new Error("Связь с пультом устарела. Откройте «Ещё» и снова введите код с телевизора."), { statusCode: 401 });
-}
-
-function groupByDay(events: Awaited<ReturnType<typeof calendars.eventsForNextMonth>>) {
-  const days = new Map<string, typeof events>();
-  for (const event of events) {
-    const date = event.start.slice(0, 10);
-    days.set(date, [...(days.get(date) ?? []), event]);
-  }
-  return [...days.entries()].map(([date, dayEvents]) => ({ date, events: dayEvents }));
-}
-
-function publicPage(title: string, content: string): string {
-  return `<!doctype html>
-  <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" type="image/png" href="${config.MINI_APP_ORIGIN}/assets/dino-icon-512.png">
-  <meta name="theme-color" content="#171815"><title>${title} · Dino TV</title>
-  <style>
-    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    * { box-sizing: border-box; } body { margin: 0; min-height: 100vh; color: #eee9de; background: radial-gradient(circle at 78% 2%, #4b5143 0, transparent 31rem), #171815; }
-    main { width: min(46rem, calc(100% - 3rem)); margin: auto; padding: 8rem 0 5rem; } header, footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
-    .mark { color: #d4ab70; font-size: .82rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; } nav { display: flex; gap: 1rem; }
-    a { color: #d4ab70; text-decoration: none; } a:hover { text-decoration: underline; } section { margin-top: 5.5rem; } .eyebrow { color: #b7b7aa; font-size: .78rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-    h1 { max-width: 13ch; margin: 1.1rem 0 1.4rem; font-family: Georgia, "Times New Roman", serif; font-size: clamp(3.2rem, 10vw, 6rem); font-weight: 400; line-height: .94; letter-spacing: -.055em; }
-    h2 { margin: 2.9rem 0 .65rem; font-size: 1rem; letter-spacing: .01em; } p { max-width: 42rem; color: #c4c2b8; font-size: 1rem; line-height: 1.7; } .lead { color: #eee9de; font-size: 1.22rem; } .note { margin-top: 2rem; color: #9c9b91; font-size: .9rem; }
-    footer { margin-top: 6rem; padding-top: 1.4rem; border-top: 1px solid #3b3d36; color: #8d8d84; font-size: .82rem; }
-    @media (max-width: 35rem) { main { padding-top: 3rem; } h1 { font-size: 3.35rem; } }
-  </style></head><body><main><header><a class="mark" href="/">Dino TV</a><nav><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav></header><section>${content}</section><footer><span>Private household display</span><span>© 2026 Dino TV</span></footer></main></body></html>`;
-}
-
-app.setErrorHandler((error, _, reply) => {
-  app.log.error(error);
-  const statusCode = error instanceof MediaError ? error.statusCode : (error as { statusCode?: number }).statusCode ?? 500;
-  const message = error instanceof Error ? error.message : "Internal server error";
-  reply.code(statusCode).send({ error: message });
-});
-
-app.listen({ port: config.PORT, host: "0.0.0.0" })
-  .catch((error) => { app.log.error(error); process.exit(1); });

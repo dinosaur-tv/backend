@@ -1,12 +1,17 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { defaultRotation, normalizeRotation, type StoredState } from "./types.js";
 
-const emptyState = (): StoredState => ({
+export const emptyState = (): StoredState => ({
   oauth: {},
   display: { mode: "TODAY", theme: "gallery", mood: "home", privacy: false, showWeather: true, showCalendar: true, rotation: defaultRotation() },
 });
+
+export interface StateStore {
+  read(): StoredState;
+  update(mutator: (state: StoredState) => void): StoredState;
+}
 
 interface CipherPayload {
   iv: string;
@@ -26,14 +31,6 @@ export class EncryptedStore {
 
   read(): StoredState {
     return structuredClone(this.state);
-  }
-
-  tvSession(): string {
-    if (!this.state.tvSession) {
-      this.state.tvSession = randomBytes(24).toString("base64url");
-      this.persist();
-    }
-    return this.state.tvSession;
   }
 
   update(mutator: (state: StoredState) => void): StoredState {
@@ -80,6 +77,8 @@ export class EncryptedStore {
       tag: cipher.getAuthTag().toString("base64"),
       ciphertext: ciphertext.toString("base64"),
     };
-    writeFileSync(this.filePath, JSON.stringify(payload), { mode: 0o600 });
+    const temporary = `${this.filePath}.tmp`;
+    writeFileSync(temporary, JSON.stringify(payload), { mode: 0o600 });
+    renameSync(temporary, this.filePath);
   }
 }

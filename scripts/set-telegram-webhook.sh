@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 set -a
 source ./.env
 set +a
-: "${TELEGRAM_WEB_APP_URL:=https://home.dym-dino.ru/console/}"
+: "${TELEGRAM_WEB_APP_URL:?Set TELEGRAM_WEB_APP_URL in .env}"
 
 curl --fail-with-body --silent --show-error \
   --form "url=${PUBLIC_BASE_URL}/v1/telegram/webhook" \
@@ -22,7 +22,7 @@ curl --fail-with-body --silent --show-error \
   "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyCommands" >/dev/null
 
 curl --fail-with-body --silent --show-error \
-  --data-urlencode 'description=Домашний экран Dino TV: погода Петербурга, общие календари и настроение гостиной. Управление — из Mini App или командами слева.' \
+  --data-urlencode 'description=Домашний экран Dino TV. Создайте свой дом, подключите календари и привяжите телевизор. У каждого дома свои участники, настройки и устройства. Управление — из Mini App или командами слева.' \
   "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyDescription" >/dev/null || true
 
 curl --fail-with-body --silent --show-error \

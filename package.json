@@ -5,16 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "check": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "npm run build && node --test dist/telegram.test.js dist/commands.test.js dist/weather.test.js dist/media.test.js dist/pairing.test.js dist/music.test.js dist/tv-command.test.js dist/note.test.js dist/tv-presence.test.js dist/home-auth.test.js dist/rotation.test.js",
+    "test": "npm run build && node --test dist/*.test.js",
     "quality": "npm run check && npm run lint && npm test"
   },
   "dependencies": {
     "fastify": "^5.2.1",
-    "googleapis": "^144.0.0",
+    "googleapis": "^178.1.1",
     "zod": "^3.24.2"
   },
   "devDependencies": {

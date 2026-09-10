@@ -46,9 +46,10 @@ export function verifiedTelegramWebAppUserId(
   botToken: string,
   nowSeconds = Math.floor(Date.now() / 1000),
 ): number | undefined {
-  if (!initData) return undefined;
+  if (!initData || initData.length > 16_384) return undefined;
 
   const parameters = new URLSearchParams(initData);
+  if (new Set(parameters.keys()).size !== [...parameters.keys()].length) return undefined;
   const receivedHash = parameters.get("hash");
   const authDate = Number(parameters.get("auth_date"));
   const rawUser = parameters.get("user");
@@ -69,7 +70,7 @@ export function verifiedTelegramWebAppUserId(
 
   try {
     const user = JSON.parse(rawUser) as { id?: unknown };
-    return typeof user.id === "number" && Number.isSafeInteger(user.id) ? user.id : undefined;
+    return typeof user.id === "number" && Number.isSafeInteger(user.id) && user.id > 0 ? user.id : undefined;
   } catch {
     return undefined;
   }

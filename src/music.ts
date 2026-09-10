@@ -49,7 +49,16 @@ export class MusicDesk {
   ) {}
 
   hearFromTv(value: unknown) {
-    this.nowPlaying = heardNowPlaying(value, this.nowPlaying);
+    const next = heardNowPlaying(value, this.nowPlaying);
+    // Keep the last live track if the television briefly fails to read metadata
+    // (empty MediaSession stack is common on Kinopoisk Music).
+    if (!next) {
+      if (this.nowPlaying && this.live()) return;
+      this.nowPlaying = undefined;
+      this.heardAt = this.now();
+      return;
+    }
+    this.nowPlaying = next;
     this.heardAt = this.now();
   }
 
