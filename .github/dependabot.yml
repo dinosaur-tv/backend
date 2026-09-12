@@ -10,3 +10,8 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # typescript-eslint refuses to load against TypeScript 7 and its peer range stops below 6.1.
+      # Drop this once typescript-eslint ships TS >=7 support.
+      - dependency-name: "typescript"
+        versions: [">=7"]
