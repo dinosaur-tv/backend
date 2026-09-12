@@ -1,11 +1,11 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { defaultRotation, normalizeRotation, type StoredState } from "./types.js";
+import { defaultPlace, defaultRotation, normalizePlace, normalizeRotation, type StoredState } from "./types.js";
 
 export const emptyState = (): StoredState => ({
   oauth: {},
-  display: { mode: "TODAY", theme: "gallery", mood: "home", privacy: false, showWeather: true, showCalendar: true, rotation: defaultRotation() },
+  display: { mode: "TODAY", theme: "gallery", mood: "home", privacy: false, showWeather: true, showCalendar: true, rotation: defaultRotation(), place: defaultPlace() },
 });
 
 export interface StateStore {
@@ -61,6 +61,8 @@ export class EncryptedStore {
     }
     if (!parsed.display.mood) parsed.display.mood = "home";
     parsed.display.rotation = normalizeRotation(parsed.display.rotation);
+    // Homes created before the weather moved to the screen keep the location they always had.
+    parsed.display.place = normalizePlace(parsed.display.place) ?? defaultPlace();
     if (parsed.display.showWeather === undefined) parsed.display.showWeather = true;
     if (parsed.display.showCalendar === undefined) parsed.display.showCalendar = true;
     if (parsed.tvLinked === undefined) parsed.tvLinked = Boolean(parsed.tvSession);

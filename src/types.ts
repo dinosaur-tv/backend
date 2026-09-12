@@ -50,6 +50,36 @@ export interface DisplayBackground {
   mime: "image/jpeg" | "image/png" | "image/webp";
 }
 
+/** Where the screen looks up its weather. Stored per household, not baked into the code. */
+export interface DisplayPlace {
+  name: string;
+  latitude: number;
+  longitude: number;
+  timezone: string;
+}
+
+export const defaultPlace = (): DisplayPlace => ({
+  name: "Санкт-Петербург",
+  latitude: 59.9386,
+  longitude: 30.3141,
+  timezone: "Europe/Moscow",
+});
+
+/** Coordinates outside the globe, or a timezone the screen cannot format with, would break the forecast. */
+export function normalizePlace(value: unknown): DisplayPlace | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const name = typeof raw.name === "string" ? raw.name.trim().slice(0, 60) : "";
+  const latitude = Number(raw.latitude);
+  const longitude = Number(raw.longitude);
+  const timezone = typeof raw.timezone === "string" ? raw.timezone.trim() : "";
+  if (!name || !timezone || timezone.length > 64) return undefined;
+  if (!Number.isFinite(latitude) || Math.abs(latitude) > 90) return undefined;
+  if (!Number.isFinite(longitude) || Math.abs(longitude) > 180) return undefined;
+  try { new Intl.DateTimeFormat("en-CA", { timeZone: timezone }); } catch { return undefined; }
+  return { name, latitude: Math.round(latitude * 1e4) / 1e4, longitude: Math.round(longitude * 1e4) / 1e4, timezone };
+}
+
 export interface DisplayRotation {
   enabled: boolean;
   today: number;
@@ -92,6 +122,7 @@ export interface DisplaySettings {
   note?: DisplayNote;
   background?: DisplayBackground;
   rotation: DisplayRotation;
+  place: DisplayPlace;
 }
 
 export interface StoredPairing {

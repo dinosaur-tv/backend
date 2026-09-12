@@ -14,6 +14,7 @@ import {
   displayMoods,
   displayThemes,
   liveNote,
+  normalizePlace,
   normalizeRotation,
   noteDurationsMin,
   noteExpiresAt,
@@ -22,12 +23,10 @@ import {
   type DisplayMood,
   type DisplayTheme,
   type SnapshotEvent,
-  type WeatherSnapshot,
 } from "./types.js";
 import { MusicDesk, musicActions } from "./music.js";
 import { TvDesk, tvApps, tvKeys } from "./tv-command.js";
 import { parseTvVisible, TvPresence } from "./tv-presence.js";
-import { fallbackWeather, saintPetersburgWeather } from "./weather.js";
 
 setDefaultResultOrder("ipv4first");
 
@@ -51,7 +50,6 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
     return `${config.PUBLIC_BASE_URL}/v1/media/background/${homeId}/${id}?expires=${expires}&signature=${signMedia(homeId + "/" + id, expires, config.TOKEN_ENCRYPTION_KEY)}`;
   }
   const feedTtlMs = 45_000;
-  let cachedWeather: WeatherSnapshot = fallbackWeather();
   let cachedEvents: SnapshotEvent[] = [];
   let feedUpdatedAt = 0;
   let feedRevision = 0;
@@ -61,10 +59,8 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
     if (feedRefresh) return feedRefresh;
     const revision = feedRevision;
     feedRefresh = (async () => {
-      const [weatherResult, eventsResult] = await Promise.allSettled([saintPetersburgWeather(), calendars.eventsForNextMonth()]);
+      const [eventsResult] = await Promise.allSettled([calendars.eventsForNextMonth()]);
       if (revision !== feedRevision) return;
-      if (weatherResult.status === "rejected") app.log.warn({ err: weatherResult.reason }, "weather fetch failed");
-      else cachedWeather = weatherResult.value;
       if (eventsResult.status === "rejected") app.log.warn("calendar fetch failed");
       else cachedEvents = eventsResult.value;
       feedUpdatedAt = Date.now();
@@ -221,8 +217,7 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
     const note = liveNote(state.display.note);
     return reply.header("Cache-Control", "no-store").send({
       generatedAt: new Date().toISOString(),
-      timezone: "Europe/Moscow",
-      weather: cachedWeather,
+      timezone: state.display.place.timezone,
       days: groupByDay(cachedEvents),
       display: {
         ...state.display,
@@ -273,7 +268,6 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
         backgroundUrl: state.display.background ? backgroundUrl(state.display.background.id) : undefined,
       },
       connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
-      weatherCity: "Санкт-Петербург",
       tvLinked: Boolean(state.tvLinked),
       ...tvView(state),
       nowPlaying: music.snapshot().nowPlaying ?? null,
@@ -299,6 +293,12 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
           .optional(),
         clearNote: z.boolean().optional(),
         clearBackground: z.boolean().optional(),
+        place: z.object({
+          name: z.string().trim().min(1).max(60),
+          latitude: z.number(),
+          longitude: z.number(),
+          timezone: z.string().trim().min(1).max(64),
+        }).optional(),
         reloadTv: z.boolean().optional(),
         tvPower: z.enum(["on", "off"]).optional(),
         rotation: z
@@ -324,6 +324,11 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
         state.display.mood = "home";
       }
       if (body.mood) state.display.mood = body.mood as DisplayMood;
+      if (body.place) {
+        const place = normalizePlace(body.place);
+        if (!place) throw Object.assign(new Error("Не удалось распознать место"), { statusCode: 400 });
+        state.display.place = place;
+      }
       if (body.privacy !== undefined) state.display.privacy = body.privacy;
       if (body.showWeather !== undefined) state.display.showWeather = body.showWeather;
       if (body.showCalendar !== undefined) state.display.showCalendar = body.showCalendar;

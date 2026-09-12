@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { handleTelegramCommand } from "./commands.js";
+import { defaultPlace } from "./types.js";
 import type { StoredState } from "./types.js";
 
 function blankState(): StoredState {
-  return { oauth: {}, display: { mode: "TODAY", theme: "gallery", mood: "home", privacy: false, showWeather: true, showCalendar: true, rotation: { enabled: true, today: 30, tomorrow: 30, week: 30 } } };
+  return { oauth: {}, display: { mode: "TODAY", theme: "gallery", mood: "home", privacy: false, showWeather: true, showCalendar: true, rotation: { enabled: true, today: 30, tomorrow: 30, week: 30 }, place: defaultPlace() } };
 }
 
 test("switches the living-room screen and explains it warmly", () => {
