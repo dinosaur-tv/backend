@@ -99,7 +99,12 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
   });
   app.get("/health", async () => ({ ok: true, service: "dino-tv-backend" }));
   app.get("/", async (_, reply) => reply.type("text/html").send(publicPage("Dino TV", "Ваш домашний экран", "Создайте свой дом в Telegram-боте, подключите календари и привяжите телевизор. У каждого дома отдельные участники, настройки и устройства.")));
-  app.get("/privacy", async (_, reply) => reply.type("text/html").send(publicPage("Конфиденциальность", "Ваши данные", "Сервис хранит Telegram ID, членство в домах, настройки, загруженные фоны и зашифрованные токены Google. События календарей и сведения о музыке доступны участникам вашего дома и привязанным устройствам. Календари используются только для домашнего расписания, не для рекламы. Владелец сервера имеет административный доступ к хранилищу. Отключить Google можно в приложении или в аккаунте Google. Владелец дома может удалить дом и его активные данные. Копии резервного хранения удаляет оператор сервера по своей политике. Не подключайте личные календари к серверу, оператору которого вы не доверяете.")));
+  // Google checks this page during OAuth verification, and looks for the Limited Use wording in English.
+  app.get("/privacy", async (_, reply) => reply.type("text/html").send(publicPage("Конфиденциальность", "Ваши данные",
+    "Сервис хранит Telegram ID, членство в домах, настройки, загруженные фоны и зашифрованные токены Google. События календарей и сведения о музыке доступны участникам вашего дома и привязанным устройствам. Календари используются только для домашнего расписания, не для рекламы и не для обучения моделей.",
+    "Данные не продаются и не передаются третьим лицам. Владелец сервера имеет административный доступ к хранилищу. Отключить Google можно в приложении или в аккаунте Google: токен и кэш событий удаляются. Владелец дома может удалить дом и его активные данные. Копии резервного хранения удаляет оператор сервера по своей политике.",
+    "Не подключайте личные календари к серверу, оператору которого вы не доверяете. Вопросы о данных — на адрес поддержки, указанный на экране согласия Google.",
+    "<h2>Limited Use (English)</h2>Dino TV’s use and transfer to any other app of information received from Google APIs will adhere to the <a href=\"https://developers.google.com/terms/api-services-user-data-policy\">Google API Services User Data Policy</a>, including the Limited Use requirements. Calendar data is read only, shown on the household’s own screen, never sold, never transferred to third parties, and never used for advertising or to train machine-learning models. Revoking access in the app or in your Google Account deletes the stored refresh token and the cached events.")));
   app.get("/terms", async (_, reply) => reply.type("text/html").send(publicPage("Условия", "Использование Dino TV", "Владелец дома отвечает за приглашения и привязку устройств: участники видят общее расписание. Сведения могут обновляться с задержкой. Работа Google, Telegram и телевизора зависит от сторонних сервисов. Это домашний экран, а не система критических уведомлений.")));
   app.get("/oauth/google/start", async (_, reply) => reply.code(410).send({ error: "Подключите календарь в приложении: Ещё → Календари" }));
   app.get("/oauth/google/callback", async (request, reply) => {
@@ -230,8 +235,9 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
   app.addHook("onClose", async () => { await Promise.all([...instances.values()].map((instance) => instance.close())); instances.clear(); homes.close(); });
   return app;
 }
-function publicPage(title: string, heading: string, text: string) {
-  return `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{max-width:44rem;margin:8vh auto;padding:2rem;background:#191b18;color:#ece7da;font:18px/1.7 system-ui}h1{font:48px Georgia}a{color:#d1a466}nav{display:flex;gap:1rem}</style><nav><a href="/">Dino TV</a><a href="/privacy">Конфиденциальность</a><a href="/terms">Условия</a></nav><h1>${heading}</h1><p>${text}</p></html>`;
+function publicPage(title: string, heading: string, ...paragraphs: string[]) {
+  const body = paragraphs.map((text) => `<p>${text}</p>`).join("");
+  return `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{max-width:44rem;margin:8vh auto;padding:2rem;background:#191b18;color:#ece7da;font:18px/1.7 system-ui}h1{font:48px Georgia}h2{font:22px Georgia;margin-top:2rem}a{color:#d1a466}nav{display:flex;gap:1rem}</style><nav><a href="/">Dino TV</a><a href="/privacy">Конфиденциальность</a><a href="/terms">Условия</a></nav><h1>${heading}</h1>${body}</html>`;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const config = loadConfig(), app = createApp(config);
