@@ -51,4 +51,26 @@ OAuth-ссылка одноразовая, действует 15 минут. С�
 
 Публикация исходников верификацию не заменяет.
 
+### Что вставлять в поля заявки
+
+Обоснования доступов пишутся по-английски, по одному на каждый:
+
+> **`calendar.calendarlist.readonly`** — Read-only access to the list of the user's calendars so the user can choose, inside our app, which of their own calendars appear on their household TV screen. We store only the selected calendar ids. We never modify calendars.
+
+> **`calendar.events.readonly`** — Read-only access to upcoming events so the household TV screen can show today's and this week's schedule. Events are fetched on a timer, cached briefly on our server, shown only to the members and devices of that household, and never sold, transferred or used for advertising or model training.
+
+### Сценарий видео
+
+Google отклоняет заявки чаще всего из-за видео. Две-три минуты, без вырезаний, по порядку:
+
+1. Браузер, адресная строка с подтверждённым доменом — открыть `/`, показать ссылки на `/privacy` и `/terms`.
+2. Открыть Telegram-бота, создать дом, войти в мини-приложение.
+3. «Ещё → Календари → Подключить». **Задержаться на полном URL экрана согласия**, чтобы в кадре был `client_id` — так проверяющий убедится, что это тот самый клиент.
+4. Экран согласия: показать список запрашиваемых доступов целиком.
+5. Подтвердить, вернуться в приложение, выбрать конкретные календари.
+6. **Показать, ради чего всё это**: экран телевизора с расписанием.
+7. Показать «Отключить» и сказать, что это удаляет токен и кэш событий.
+
+Английская речь или английские субтитры. Доступ к видео — «по ссылке», без ограничения по возрасту.
+
 [Правила OAuth](https://developers.google.com/identity/protocols/oauth2) · [Web-подключение](https://developers.google.com/identity/protocols/oauth2/web-server)
