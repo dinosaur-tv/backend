@@ -9,9 +9,11 @@ import { createHomeApp } from "./home-app.js";
 import { Households, fail, type Access } from "./households.js";
 import { AttemptLimiter, mediaAllowed } from "./security.js";
 import { parseTelegramUpdate, telegramWebhookReply, verifiedTelegramWebAppUserId } from "./telegram.js";
-import { people, type Person } from "./types.js";
+import { type Person } from "./types.js";
 
 const idSchema = z.string().uuid();
+/** A calendar account id: the two names the first homes used, or hex minted since. */
+const personSchema = z.string().regex(/^[a-z0-9]{1,32}$/);
 const codeSchema = z.object({ code: z.string().regex(/^(?:\d{6}|\d{10})$/) });
 const first = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] : value;
 
@@ -80,7 +82,8 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     reply.code(response.statusCode).type(String(response.headers["content-type"] ?? "application/json"));
     if (url.split("?")[0] === "/v1/miniapp/state" && response.statusCode === 200) {
       const auth = access(request), data = response.json();
-      return reply.send({ ...data, household: homes.list(auth.userId).find((home) => home.id === homeId), permissions: { manageHome: auth.role === "owner", manageCalendars: Object.fromEntries(people.map((person) => [person, homes.calendarAccess(auth, person)])) } });
+      const connected = Object.keys(homes.state(homeId).read().oauth);
+      return reply.send({ ...data, household: homes.list(auth.userId).find((home) => home.id === homeId), permissions: { manageHome: auth.role === "owner", manageCalendars: Object.fromEntries(connected.map((person) => [person, homes.calendarAccess(auth, person)])) } });
     }
     return reply.send(response.rawPayload);
   }
@@ -163,13 +166,6 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
   app.delete("/v1/miniapp/households/devices/:id", async (request) => {
     homes.revokeDevice(access(request), z.object({ id: idSchema }).parse(request.params).id); return { ok: true };
   });
-  app.patch("/v1/miniapp/households/labels", async (request) => {
-    const auth = access(request); homes.owner(auth);
-    const labels = z.object({ misha: z.string().trim().min(1).max(60), natasha: z.string().trim().min(1).max(60) }).parse(request.body);
-    homes.state(auth.homeId).update((s) => { s.personLabels = labels; });
-    const instance = instances.get(auth.homeId); instances.delete(auth.homeId); await instance?.close();
-    return { ok: true };
-  });
   app.delete("/v1/miniapp/households/current", async (request) => {
     const auth = access(request); homes.owner(auth);
     homes.delete(auth);
@@ -210,8 +206,10 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     const auth = access(request);
     let person: Person | undefined;
     if (route.owner) {
-      person = z.object({ person: z.enum(people) }).parse(request.method === "GET" || request.method === "PATCH" ? request.params : request.body).person;
-      if (!homes.calendarAccess(auth, person)) fail(403, "Этот календарь подключил другой участник");
+      // Connecting a calendar that is not there yet names no account, and anyone in the
+      // home may add their own; every other call has to answer for the one it names.
+      person = z.object({ person: personSchema.optional() }).parse(request.method === "GET" || request.method === "PATCH" ? request.params : request.body).person;
+      if (person && !homes.calendarAccess(auth, person)) fail(403, "Этот календарь подключил другой участник");
     }
     if (request.method !== "GET" && !attempts.allow("write:" + auth.homeId, 120, 60_000)) fail(429, "Слишком много команд для этого дома");
     return forward(auth.homeId, request, reply, request.url, () => { const current = access(request); if (person && !homes.calendarAccess(current, person)) fail(403, "Доступ к календарю изменился"); });

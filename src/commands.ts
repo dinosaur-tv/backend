@@ -20,8 +20,8 @@ const modeNames: Record<DisplayMode, string> = {
 export function handleTelegramCommand(
   text: string,
   update: (mutator: (state: StoredState) => void) => StoredState,
-  connected: { misha: boolean; natasha: boolean },
-  labels = { misha: "Участник 1", natasha: "Участник 2" },
+  /** Every calendar the home has connected, by the name it wears on the screen. */
+  calendars: { label: string }[] = [],
 ): TelegramReply {
   const normalizedText = quickCommands[text.trim()] ?? text.trim();
   const [commandWithBot, ...argumentsList] = normalizedText.split(/\s+/);
@@ -94,8 +94,11 @@ export function handleTelegramCommand(
     return { text: "Заметка уже на экране. Через час она исчезнет сама." };
   }
   if (command === "/status") {
+    const names = calendars.map((calendar) => calendar.label).join(", ");
     return {
-      text: `Календари: ${labels.misha} — ${connected.misha ? "на связи" : "ещё не подключён"}; ${labels.natasha} — ${connected.natasha ? "на связи" : "ещё не подключён"}. Подключение и выбор календарей — в консоли, раздел «Ещё».`,
+      text: calendars.length
+        ? `Календари на связи: ${names}. Подключение и выбор календарей — в консоли, раздел «Ещё».`
+        : "Календари пока не подключены. Подключить их можно в консоли, раздел «Ещё».",
     };
   }
   if (command === "/home" || command === "/start") {

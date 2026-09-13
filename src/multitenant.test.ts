@@ -17,7 +17,7 @@ async function fixture(t: TestContext) {
   t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ current: { temperature_2m: 17 } })));
   t.mock.method(GoogleCalendarService.prototype, "eventsForNextMonth", async function(this: GoogleCalendarService) {
     const state = this["store"].read();
-    return Object.values(state.oauth).map((value) => ({ id: "event", title: value.calendarIds[0], start: "2026-09-10T12:00:00+03:00", end: "2026-09-10T13:00:00+03:00", calendarName: "Календарь", ownerName: "Человек", allDay: false, color: "#ffffff" }));
+    return Object.values(state.oauth).filter((value) => value !== undefined).map((value) => ({ id: "event", title: value.calendarIds[0], start: "2026-09-10T12:00:00+03:00", end: "2026-09-10T13:00:00+03:00", calendarName: "Календарь", ownerName: "Человек", allDay: false, color: "#ffffff" }));
   });
   const headers = (id: number, home?: string) => {
     const data = new URLSearchParams({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id }) });
@@ -63,7 +63,7 @@ test("кэш расписания, музыка, команды, присутс�
   assert.equal(a.days[0].events[0].title, "Событие A"); assert.equal(b.days[0].events[0].title, "Событие B");
   assert.equal(a.nowPlaying.title, "Музыка A"); assert.equal(b.nowPlaying, null);
   assert.equal(a.tvCommands.length, 1); assert.equal(b.tvCommands.length, 0);
-  assert.equal(a.personLabels.misha, "Участник 1"); assert.equal("tvUrl" in a, false);
+  assert.equal(a.calendars[0].label, "Участник 1"); assert.equal("tvUrl" in a, false);
   assert.equal(ar.body.includes("secret-A"), false); assert.equal(br.body.includes("Событие A"), false);
   assert.equal((await f.app.inject({ url: "/v1/display/snapshot", headers: { ...atv, "x-dino-home-id": f.b.id } })).statusCode, 403);
 });
@@ -88,7 +88,7 @@ test("ссылка на личный фон подписана вместе с I
 });
 test("Google callback нельзя направить в другой дом", async (t) => {
   const f = await fixture(t);
-  const response = await f.app.inject({ method: "POST", url: "/v1/miniapp/calendars/connect", headers: f.ah, payload: { person: "misha" } });
+  const response = await f.app.inject({ method: "POST", url: "/v1/miniapp/calendars/connect", headers: f.ah, payload: { label: "Миша" } });
   assert.equal(response.statusCode, 200);
   const state = new URL(response.json().url).searchParams.get("state")!;
   assert.equal(state.startsWith(f.a.id + "."), true);
@@ -96,13 +96,24 @@ test("Google callback нельзя направить в другой дом", a
   assert.equal(callback.statusCode, 400);
   assert.deepEqual(f.db.state(f.b.id).read().oauth, {});
 });
+test("новый календарь просит подпись, и их помещается двенадцать", async (t) => {
+  const f = await fixture(t);
+  const connect = (payload: object) => f.app.inject({ method: "POST", url: "/v1/miniapp/calendars/connect", headers: f.ah, payload });
+  assert.equal((await connect({})).statusCode, 400, "без подписи экран не знал бы, чьё это дело");
+  f.db.state(f.a.id).update((state) => {
+    for (let index = 0; index < 12; index++) state.oauth["c" + index] = { refreshToken: "t", calendarIds: [], connectedAt: "now", label: "Календарь " + index };
+  });
+  assert.equal((await connect({ label: "Тринадцатый" })).statusCode, 409);
+  assert.equal((await connect({ person: "c3" })).statusCode, 200, "переподключить уже подключённый можно всегда");
+});
+
 test("участник подключает свободный календарь, но не управляет чужим или домом", async (t) => {
   const f = await fixture(t);
   const invite = f.db.invite("member", f.db.access("1", f.a.id)); f.db.join("3", invite.code);
   const member = f.headers(3, f.a.id);
   f.db.state(f.a.id).update((s) => { s.oauth.misha = { userId: "1", refreshToken: "owner-secret", calendarIds: [], connectedAt: "now" }; });
   assert.equal((await f.app.inject({ method: "POST", url: "/v1/miniapp/calendars/connect", headers: member, payload: { person: "misha" } })).statusCode, 403);
-  assert.equal((await f.app.inject({ method: "POST", url: "/v1/miniapp/calendars/connect", headers: member, payload: { person: "natasha" } })).statusCode, 200);
+  assert.equal((await f.app.inject({ method: "POST", url: "/v1/miniapp/calendars/connect", headers: member, payload: { label: "Мой" } })).statusCode, 200);
   assert.equal((await f.app.inject({ method: "POST", url: "/v1/miniapp/households/invite", headers: member })).statusCode, 403);
   assert.equal((await f.app.inject({ method: "POST", url: "/v1/miniapp/access/revoke", headers: member })).statusCode, 403);
   await f.app.inject({ method: "DELETE", url: "/v1/miniapp/households/members/3", headers: f.ah });

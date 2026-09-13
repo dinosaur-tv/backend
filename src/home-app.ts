@@ -19,7 +19,6 @@ import {
   noteDurationsMin,
   noteExpiresAt,
   parseNoteMinutes,
-  people,
   type DisplayMood,
   type DisplayTheme,
   type SnapshotEvent,
@@ -29,6 +28,16 @@ import { TvDesk, tvApps, tvKeys } from "./tv-command.js";
 import { parseTvVisible, TvPresence } from "./tv-presence.js";
 
 setDefaultResultOrder("ipv4first");
+
+/** A calendar account id: the two names the first homes used, or hex minted since. */
+const personSchema = z.string().regex(/^[a-z0-9]{1,32}$/);
+/** The name over a calendar's events. It reaches a screen and an HTML page, so it stays short. */
+const labelSchema = z.string().trim().min(1).max(60);
+
+/** The only page this server renders from user text: the one Google lands on. */
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char));
+}
 
 /** Изолированный маршрутизатор одного дома. Никогда не слушает сетевой порт. */
 export function createHomeApp(config: Config, store: StateStore, dataDir: string, homeId: string, internalToken: string) {
@@ -44,7 +53,6 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
   });
   const attempts = new AttemptLimiter();
   const features = { tvRemote: config.TV_REMOTE_ENABLED };
-  const personLabels = { misha: config.PERSON_1_NAME, natasha: config.PERSON_2_NAME };
   function backgroundUrl(id: string): string {
     const expires = (Math.floor(Date.now() / 300_000) + 3) * 300_000;
     return `${config.PUBLIC_BASE_URL}/v1/media/background/${homeId}/${id}?expires=${expires}&signature=${signMedia(homeId + "/" + id, expires, config.TOKEN_ENCRYPTION_KEY)}`;
@@ -164,22 +172,32 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
 
   app.post("/v1/miniapp/calendars/connect", async (request) => {
     requireMiniAppUser(request);
-    const { person } = z.object({ person: z.enum(people) }).parse(request.body);
+    // No person means a calendar this home has never had: it is named here and born on the way back.
+    const { person, label } = z.object({ person: personSchema.optional(), label: labelSchema.optional() }).parse(request.body);
     if (!calendars.isConfigured()) throw Object.assign(new Error("Владелец сервера ещё не настроил Google OAuth"), { statusCode: 503 });
-    return { url: calendars.authorizationUrl(person, firstHeader(request.headers["x-dino-actor"])) };
+    const known = calendars.accounts();
+    const reconnecting = person !== undefined && known.some((account) => account.id === person);
+    if (!reconnecting && !label) throw Object.assign(new Error("Подпишите календарь — это имя увидят на экране"), { statusCode: 400 });
+    if (!reconnecting && known.length >= 12) throw Object.assign(new Error("В одном доме помещается двенадцать календарей"), { statusCode: 409 });
+    return { url: calendars.authorizationUrl(person, firstHeader(request.headers["x-dino-actor"]), label) };
   });
 
   app.get("/v1/miniapp/calendars/:person", async (request) => {
     requireMiniAppUser(request);
-    const { person } = z.object({ person: z.enum(people) }).parse(request.params);
+    const { person } = z.object({ person: personSchema }).parse(request.params);
     return { calendars: await calendars.listCalendars(person) };
   });
 
   app.patch("/v1/miniapp/calendars/:person", async (request) => {
     requireMiniAppUser(request);
-    const { person } = z.object({ person: z.enum(people) }).parse(request.params);
-    const { calendarIds } = z.object({ calendarIds: z.array(z.string().min(1).max(512)).min(1).max(20) }).parse(request.body);
-    await calendars.selectCalendars(person, calendarIds);
+    const { person } = z.object({ person: personSchema }).parse(request.params);
+    const body = z.object({
+      calendarIds: z.array(z.string().min(1).max(512)).min(1).max(20).optional(),
+      label: labelSchema.optional(),
+    }).parse(request.body);
+    if (!body.calendarIds && !body.label) throw Object.assign(new Error("Нечего менять"), { statusCode: 400 });
+    if (body.label) calendars.rename(person, body.label);
+    if (body.calendarIds) await calendars.selectCalendars(person, body.calendarIds);
     cachedEvents = [];
     feedUpdatedAt = 0;
     feedRevision++;
@@ -188,7 +206,7 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
 
   app.post("/v1/miniapp/calendars/disconnect", async (request) => {
     requireMiniAppUser(request);
-    const { person } = z.object({ person: z.enum(people) }).parse(request.body);
+    const { person } = z.object({ person: personSchema }).parse(request.body);
     calendars.disconnect(person);
     cachedEvents = [];
     feedUpdatedAt = 0;
@@ -198,14 +216,14 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
 
   app.get("/oauth/google/callback", async (request, reply) => {
     const query = z.object({ code: z.string().min(1), state: z.string().min(1) }).parse(request.query);
-    const person = await calendars.completeAuthorization(query.code, query.state);
+    const { label } = await calendars.completeAuthorization(query.code, query.state);
     cachedEvents = [];
     feedUpdatedAt = 0;
     feedRevision++;
     return reply
       .type("text/html")
       .send(
-        `<!doctype html><meta charset="utf-8"><title>Dino TV</title><h1>Готово</h1><p>Календарь ${people.indexOf(person) + 1} подключён. Вернитесь в приложение, чтобы выбрать календари.</p>`,
+        `<!doctype html><meta charset="utf-8"><title>Dino TV</title><h1>Готово</h1><p>Календарь «${escapeHtml(label)}» подключён. Вернитесь в приложение, чтобы выбрать календари.</p>`,
       );
   });
 
@@ -231,10 +249,9 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
       music: { connected: music.snapshot().connected },
       musicCommand: music.snapshot().command ?? null,
       features,
-      personLabels,
+      calendars: calendars.accounts(),
       tvCommand: config.TV_REMOTE_ENABLED ? (tvDesk.snapshot().command ?? null) : null,
       tvCommands: config.TV_REMOTE_ENABLED ? tvDesk.snapshot().commands : [],
-      connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
       inviteCode: null,
     });
   });
@@ -260,14 +277,13 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
     const state = store.read();
     return {
       features,
-      personLabels,
+      calendars: calendars.accounts(),
       googleConfigured: calendars.isConfigured(),
       display: {
         ...state.display,
         note: liveNote(state.display.note),
         backgroundUrl: state.display.background ? backgroundUrl(state.display.background.id) : undefined,
       },
-      connectedCalendars: Object.fromEntries(people.map((person) => [person, Boolean(state.oauth[person])])),
       tvLinked: Boolean(state.tvLinked),
       ...tvView(state),
       nowPlaying: music.snapshot().nowPlaying ?? null,
@@ -449,16 +465,7 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
       return reply.send({ ok: true });
     }
     try {
-      const connected = store.read().oauth;
-      const response = handleTelegramCommand(
-        message.text,
-        (mutator) => store.update(mutator),
-        {
-          misha: Boolean(connected.misha),
-          natasha: Boolean(connected.natasha),
-        },
-        personLabels,
-      );
+      const response = handleTelegramCommand(message.text, (mutator) => store.update(mutator), calendars.accounts());
       return reply.send(telegramWebhookReply(message.chat.id, response, config.TELEGRAM_WEB_APP_URL));
     } catch (error) {
       app.log.warn({ err: error }, "Telegram command failed");

@@ -3,7 +3,7 @@ import { OAuthStates } from "./oauth-state.js";
 import { google } from "googleapis";
 import type { Config } from "./config.js";
 import type { StateStore } from "./store.js";
-import type { Person, SnapshotEvent } from "./types.js";
+import { freeCalendarColor, type Person, type SnapshotEvent } from "./types.js";
 
 const timezone = "Europe/Moscow";
 const scopes = [
@@ -11,12 +11,15 @@ const scopes = [
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
 ];
 
-const people = ["misha", "natasha"] as const;
-
 export class GoogleCalendarService {
-  labels(): Record<Person, { label: string; color: string }> {
-    return { misha: { label: this.config.PERSON_1_NAME, color: "#D1A466" }, natasha: { label: this.config.PERSON_2_NAME, color: "#8EA77A" } };
+  /** Every calendar this home has connected, in the order it connected them. */
+  accounts(): { id: Person; label: string; color: string; calendarIds: string[]; connectedBy?: string }[] {
+    const state = this.store.read();
+    return Object.entries(state.oauth).flatMap(([id, connection]) => connection
+      ? [{ id, label: connection.label ?? "Календарь", color: connection.color ?? freeCalendarColor([]), calendarIds: connection.calendarIds, connectedBy: connection.userId }]
+      : []);
   }
+
   constructor(
     private readonly config: Config,
     private readonly store: StateStore,
@@ -27,32 +30,52 @@ export class GoogleCalendarService {
     return Boolean(this.config.GOOGLE_CLIENT_ID && this.config.GOOGLE_CLIENT_SECRET);
   }
 
-  authorizationUrl(person: Person, userId?: string): string {
+  /**
+   * Reconnecting names the account that is already there; adding one mints an id, so a
+   * home is free to hold as many calendars as it has people. The label travels with the
+   * pending state: the account only exists once Google has answered.
+   */
+  authorizationUrl(person: Person | undefined, userId?: string, label?: string): string {
+    const id = person ?? randomBytes(6).toString("hex");
     const client = this.client();
     return client.generateAuthUrl({
       access_type: "offline",
       prompt: "consent",
       scope: scopes,
-      state: new OAuthStates(this.store, undefined, this.namespace).issue(person, userId),
+      state: new OAuthStates(this.store, undefined, this.namespace).issue(id, userId, label),
     });
   }
 
-  async completeAuthorization(code: string, state: string): Promise<Person> {
+  async completeAuthorization(code: string, state: string): Promise<{ person: Person; label: string }> {
     const states = new OAuthStates(this.store);
-    const { person, version, userId } = states.consume(state);
+    const { person, version, userId, label } = states.consume(state);
     const client = this.client();
     const { tokens } = await client.getToken(code);
     if (!tokens.refresh_token) throw new Error("Google did not return a refresh token; reconnect with consent");
     if (!states.isCurrent(person, version)) throw Object.assign(new Error("Подключение отменено или заменено более новым"), { statusCode: 409 });
+    let named = label ?? "Календарь";
     this.store.update((stored) => {
+      const previous = stored.oauth[person];
+      named = label || previous?.label || "Календарь";
       stored.oauth[person] = {
         userId,
         refreshToken: tokens.refresh_token!,
-        calendarIds: [],
+        calendarIds: previous?.calendarIds ?? [],
         connectedAt: new Date().toISOString(),
+        label: named,
+        color: previous?.color ?? freeCalendarColor(Object.values(stored.oauth).map((item) => item?.color ?? "")),
       };
     });
-    return person;
+    return { person, label: named };
+  }
+
+  /** The name over these events on the screen. Changing it never touches the connection. */
+  rename(person: Person, label: string): void {
+    this.store.update((stored) => {
+      const connection = stored.oauth[person];
+      if (!connection) throw Object.assign(new Error("Этот календарь уже отключён"), { statusCode: 404 });
+      connection.label = label;
+    });
   }
 
   async eventsForNextMonth(): Promise<SnapshotEvent[]> {
@@ -64,9 +87,11 @@ export class GoogleCalendarService {
     ending.setDate(ending.getDate() + 31);
 
     const groups = await Promise.all(
-      people.map(async (person) => {
+      Object.keys(state.oauth).map(async (person) => {
         const connection = state.oauth[person];
         if (!connection) return [];
+        const label = connection.label ?? "Календарь";
+        const color = connection.color ?? freeCalendarColor([]);
         try {
           const client = this.client();
           client.setCredentials({ refresh_token: connection.refreshToken });
@@ -100,9 +125,9 @@ export class GoogleCalendarService {
               title: event.summary?.trim() || "Без названия",
               start,
               end,
-              calendarName: this.labels()[person].label,
-              ownerName: this.labels()[person].label,
-              color: this.labels()[person].color,
+              calendarName: label,
+              ownerName: label,
+              color,
               allDay: Boolean(event.start?.date),
             }];
           });

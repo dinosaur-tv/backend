@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Config } from "./config.js";
 import { emptyState, EncryptedStore, type StateStore } from "./store.js";
-import { defaultPlace, normalizePlace, normalizeRotation, people, type StoredState } from "./types.js";
+import { defaultPlace, normalizeCalendars, normalizePlace, normalizeRotation, type StoredState } from "./types.js";
 
 export const fail = (statusCode: number, message: string): never => { throw Object.assign(new Error(message), { statusCode }); };
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -75,6 +75,9 @@ export class Households {
     // every reader would have to guard for it. Homes predate `place`, for one.
     state.display.place = normalizePlace(state.display.place) ?? defaultPlace();
     state.display.rotation = normalizeRotation(state.display.rotation);
+    normalizeCalendars(state, this.isLegacy(id)
+      ? { misha: this.config.PERSON_1_NAME, natasha: this.config.PERSON_2_NAME }
+      : {});
     return state;
   }
   list(userId: string): Household[] {
@@ -261,7 +264,7 @@ export class Households {
     });
     this.invalidateOAuth(access.homeId);
     this.state(access.homeId).update((state) => {
-      for (const person of people) if (state.oauth[person]?.userId === userId) delete state.oauth[person];
+      for (const person of Object.keys(state.oauth)) if (state.oauth[person]?.userId === userId) delete state.oauth[person];
     });
   }
   delete(access: Access) {
@@ -275,10 +278,10 @@ export class Households {
   private invalidateOAuth(id: string) {
     this.state(id).update((state) => {
       state.oauthStates = {};
-      state.oauthVersions = Object.fromEntries(people.map((person) => [person, (state.oauthVersions?.[person] ?? 0) + 1]));
+      state.oauthVersions = Object.fromEntries(Object.keys(state.oauth).map((person) => [person, (state.oauthVersions?.[person] ?? 0) + 1]));
     });
   }
-  calendarAccess(access: Access, person: "misha" | "natasha") {
+  calendarAccess(access: Access, person: string) {
     const member = this.access(access.userId, access.homeId);
     const connection = this.read(access.homeId).oauth[person];
     return member.role === "owner" || !connection || connection.userId === access.userId;

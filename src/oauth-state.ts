@@ -6,7 +6,7 @@ import type { Person } from "./types.js";
 export class OAuthStates {
   constructor(private readonly store: StateStore, private readonly now = () => Date.now(), private readonly namespace = "") {}
 
-  issue(person: Person, userId?: string): string {
+  issue(person: Person, userId?: string, label?: string): string {
     const token = (this.namespace ? this.namespace + "." : "") + randomBytes(32).toString("base64url");
     this.store.update((stored) => {
       stored.oauthStates = Object.fromEntries(Object.entries(stored.oauthStates ?? {})
@@ -14,19 +14,24 @@ export class OAuthStates {
       stored.oauthVersions ??= {};
       const version = (stored.oauthVersions[person] ?? 0) + 1;
       stored.oauthVersions[person] = version;
-      stored.oauthStates[this.hash(token)] = { person, userId, version, expiresAt: this.now() + 900_000 };
+      stored.oauthStates[this.hash(token)] = { person, userId, version, label, expiresAt: this.now() + 900_000 };
     });
     return token;
   }
 
-  consume(token: string): { person: Person; userId?: string; version: number } {
+  consume(token: string): { person: Person; userId?: string; version: number; label?: string } {
     const hash = this.hash(token);
     const pending = this.store.read().oauthStates?.[hash];
     if (!pending || pending.expiresAt <= this.now() || !pending.version) {
       throw Object.assign(new Error("OAuth-ссылка истекла или уже использована. Подключите календарь заново."), { statusCode: 400 });
     }
     this.store.update((stored) => { delete stored.oauthStates?.[hash]; });
-    return { person: pending.person, version: pending.version, ...(pending.userId ? { userId: pending.userId } : {}) };
+    return {
+      person: pending.person,
+      version: pending.version,
+      ...(pending.userId ? { userId: pending.userId } : {}),
+      ...(pending.label ? { label: pending.label } : {}),
+    };
   }
 
   isCurrent(person: Person, version: number): boolean {

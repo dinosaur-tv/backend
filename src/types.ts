@@ -1,5 +1,21 @@
+/**
+ * The two slots every home used to have. A home may now hold any number of calendar
+ * accounts under ids of its own, but these two names still name the first homes' data.
+ */
 export const people = ["misha", "natasha"] as const;
-export type Person = (typeof people)[number];
+/** An account's id: one of the two legacy names, or hex minted when a calendar is added. */
+export type Person = string;
+
+/** Enough colours that neighbouring calendars stay apart on the screen. */
+export const calendarColors = [
+  "#D1A466", "#8EA77A", "#7FA6C4", "#C58B7E", "#A98BC4", "#C4A83F", "#6FAFA2", "#C47FA0",
+] as const;
+
+/** The colour for a new account: the first one nobody in this home is wearing. */
+export function freeCalendarColor(taken: Iterable<string>): string {
+  const used = new Set(taken);
+  return calendarColors.find((color) => !used.has(color)) ?? calendarColors[0];
+}
 
 export const displayModes = ["TODAY", "TOMORROW", "WEEK"] as const;
 export type DisplayMode = (typeof displayModes)[number];
@@ -19,6 +35,10 @@ export interface OAuthConnection {
   refreshToken: string;
   calendarIds: string[];
   connectedAt: string;
+  /** What the screen writes over these events. Filled in on the way out for older homes. */
+  label?: string;
+  /** The dot beside them, from `calendarColors`. */
+  color?: string;
 }
 
 export interface DisplayNote {
@@ -80,6 +100,28 @@ export function normalizePlace(value: unknown): DisplayPlace | undefined {
   return { name, latitude: Math.round(latitude * 1e4) / 1e4, longitude: Math.round(longitude * 1e4) / 1e4, timezone };
 }
 
+/** The labels and colours the first two slots were born with. */
+const legacyCalendars: Record<string, { label: string; color: string }> = {
+  misha: { label: "Участник 1", color: calendarColors[0] },
+  natasha: { label: "Участник 2", color: calendarColors[1] },
+};
+
+/**
+ * A home written before calendars carried their own name kept the labels in a separate
+ * field — and the very first home kept them in the server's environment. Both are folded
+ * into the connections on the way out, so every reader sees one shape.
+ */
+export function normalizeCalendars(state: StoredState, fromEnvironment: Record<string, string> = {}): void {
+  const taken = Object.values(state.oauth).map((connection) => connection?.color).filter(Boolean) as string[];
+  for (const [id, connection] of Object.entries(state.oauth)) {
+    if (!connection) { delete state.oauth[id]; continue; }
+    connection.label ||= state.personLabels?.[id] || fromEnvironment[id] || legacyCalendars[id]?.label || "Календарь";
+    if (connection.color) continue;
+    connection.color = legacyCalendars[id]?.color ?? freeCalendarColor(taken);
+    taken.push(connection.color);
+  }
+}
+
 export interface DisplayRotation {
   enabled: boolean;
   today: number;
@@ -135,7 +177,7 @@ export interface StoredPairing {
 
 export interface StoredState {
   personLabels?: Record<Person, string>;
-  oauthStates?: Record<string, { person: Person; userId?: string; version?: number; expiresAt: number }>;
+  oauthStates?: Record<string, { person: Person; userId?: string; version?: number; label?: string; expiresAt: number }>;
   oauthVersions?: Partial<Record<Person, number>>;
   oauth: Partial<Record<Person, OAuthConnection>>;
   display: DisplaySettings;
