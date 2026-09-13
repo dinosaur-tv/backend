@@ -120,7 +120,7 @@ export class Households {
     return this.db.prepare("SELECT id,kind,label,created,expires FROM devices WHERE home_id=? AND expires>?").all(access.homeId, this.now());
   }
   device(token: string | undefined, kind: "tv" | "phone"): Access {
-    if (!token || token.length > 256) return fail(401, "Откройте приложение из бота или привяжите устройство");
+    if (!token || token.length > 256) return fail(401, "Устройство не привязано. Введите код с его экрана");
     const row = this.db.prepare("SELECT id,home_id,actor FROM devices WHERE token_hash=? AND kind=? AND expires>?").get(hash(token), kind, this.now());
     if (!row) return fail(401, "Связь устарела. Привяжите устройство заново");
     const access = this.access(String(row.actor), String(row.home_id));
