@@ -122,26 +122,12 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     }
     return forward(prefix, request, reply);
   });
-  let botName = "";
-  async function botUsername(): Promise<string> {
-    if (botName || !config.TELEGRAM_BOT_TOKEN) return botName;
-    try {
-      const answer = await fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/getMe`, { signal: AbortSignal.timeout(5_000) });
-      const data = await answer.json() as { result?: { username?: string } };
-      botName = data.result?.username ?? "";
-    } catch { /* the link falls back to the configured web app */ }
-    return botName;
-  }
-  app.post("/v1/miniapp/login/start", async (request, reply) => {
-    if (!config.TELEGRAM_BOT_TOKEN) return reply.code(503).send({ error: "Вход через Telegram не настроен" });
-    if (!attempts.allow("login:" + request.ip, 10, 600_000)) fail(429, "Слишком много попыток входа. Подождите немного");
-    const started = homes.startLogin();
-    const username = await botUsername();
-    return { ...started, link: username ? `https://t.me/${username}?start=${started.nonce}` : null };
-  });
-  app.get("/v1/miniapp/login/wait", async (request) => {
-    const { nonce } = z.object({ nonce: z.string().min(8).max(128) }).parse(request.query);
-    return homes.claimLogin(nonce);
+  app.post("/v1/miniapp/login", async (request) => {
+    const { code } = z.object({ code: z.string().regex(/^\d{8}$/) }).parse(request.body);
+    if (!attempts.allow("login:" + request.ip, 5, 600_000) || !attempts.allow("login-global", 100, 600_000)) {
+      fail(429, "Подождите перед следующей попыткой входа");
+    }
+    return homes.claimLogin(code);
   });
   app.post("/v1/miniapp/logout", async (request) => {
     homes.signOut(first(request.headers["x-dino-session"]));
@@ -243,19 +229,24 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     if (!message?.text || !message.from || message.chat.id !== message.from.id) return { ok: true };
     const userId = String(message.from.id);
     if (!attempts.allow("bot:" + userId, 30, 60_000)) return { ok: true };
-    const deepLink = /^\/start(?:@\w+)?\s+([A-Za-z0-9_-]{16,128})$/.exec(message.text.trim());
-    if (deepLink && homes.bindLogin(deepLink[1], userId)) {
-      return telegramWebhookReply(message.chat.id, { text: "Вход подтверждён. Возвращайтесь в приложение — оно уже открыто на вашем доме." }, config.TELEGRAM_WEB_APP_URL);
-    }
     const list = homes.list(userId);
-    if (!list.length) return telegramWebhookReply(message.chat.id, { openMiniApp: true, text: config.REGISTRATION_OPEN
-      ? "Привет! Давай настроим твой домашний экран. Открой приложение ниже: создай дом, подключи календарь и введи код с телевизора. Данные других домов тебе не видны."
-      : "Привет! Новые дома пока не создаём, но ты можешь принять приглашение в существующий дом. Открой приложение ниже." }, config.TELEGRAM_WEB_APP_URL);
-    if (/^\/(?:start|home|homes)(?:@\w+)?(?:\s|$)/i.test(message.text)) {
-      const selected = homes.access(userId);
-      const name = list.find((h) => h.id === selected.homeId)!.name;
-      return telegramWebhookReply(message.chat.id, { openMiniApp: true, text: `Сейчас управляем домом «${name}». Темы, календари и участники — в приложении. Там же можно переключить дом.` }, config.TELEGRAM_WEB_APP_URL);
+    if (/^\/(?:start|home|homes|login|вход)(?:@\w+)?(?:\s|$)/i.test(message.text)) {
+      // The code is the way in on a phone or a computer; the button is the way in here.
+      const { code } = homes.issueLoginCode(userId);
+      const spaced = `${code.slice(0, 4)} ${code.slice(4)}`;
+      const where = list.length
+        ? `Сейчас управляем домом «${list.find((h) => h.id === homes.access(userId).homeId)!.name}».`
+        : config.REGISTRATION_OPEN
+          ? "Дома пока нет — создайте его в приложении."
+          : "Новые дома сейчас не создаются, но вы можете принять приглашение.";
+      return telegramWebhookReply(message.chat.id, { openMiniApp: true, text: `${where}
+
+Код для входа на телефоне или компьютере:
+${spaced}
+
+Действует 5 минут, вводится один раз. Никому его не пересылайте: он открывает ваш дом.` }, config.TELEGRAM_WEB_APP_URL);
     }
+    if (!list.length) return telegramWebhookReply(message.chat.id, { openMiniApp: true, text: "Откройте приложение и создайте дом — там же подключаются календари и экраны." }, config.TELEGRAM_WEB_APP_URL);
     return forward(homes.access(userId).homeId, request, reply);
   });
   app.setErrorHandler((error, _, reply) => {

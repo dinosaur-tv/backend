@@ -190,44 +190,39 @@ export class Households {
     });
   }
   /**
-   * Signing in outside Telegram: the console asks for a nonce, the person opens the bot
-   * with it, and the bot binds the nonce to whoever sent it. The window is deliberately
-   * short — anyone who talks a person into forwarding their link would be handed the
-   * session, and a few minutes is the whole of that opportunity.
+   * Signing in outside Telegram. The bot hands out a code and the person types it where
+   * they are — the same gesture as pairing a television, and it survives popup blockers,
+   * web views and switching apps, none of which a deep link reliably does.
+   *
+   * Eight digits tells a login code apart from a six-digit screen or a ten-digit invite,
+   * so one field can take any of them.
    */
-  startLogin() {
+  issueLoginCode(userId: string): { code: string; expiresIn: number } {
     return this.transaction(() => {
       this.db.prepare("DELETE FROM invitations WHERE expires<=?").run(this.now());
+      this.db.prepare("DELETE FROM invitations WHERE kind='login' AND actor=?").run(userId);
       if (Number(this.db.prepare("SELECT count(*) AS n FROM invitations WHERE kind='login'").get()!.n) >= 200) {
         fail(429, "Слишком много попыток входа. Попробуйте через несколько минут");
       }
-      const nonce = randomBytes(24).toString("base64url");
-      this.db.prepare("INSERT INTO invitations VALUES (?,?,'login',NULL,NULL,NULL,?)").run(hash(nonce), hash(nonce), this.now() + 300_000);
-      return { nonce, expiresIn: 300 };
-    });
-  }
-
-  bindLogin(nonce: string, userId: string): boolean {
-    return this.transaction(() => {
-      const row = this.db.prepare("SELECT id FROM invitations WHERE code=? AND kind='login' AND expires>? AND result IS NULL").get(hash(nonce), this.now());
-      if (!row) return false;
+      let code: string;
+      do { code = String(randomInt(10_000_000, 100_000_000)); } while (this.db.prepare("SELECT id FROM invitations WHERE code=?").get(hash(code)));
       const token = randomBytes(32).toString("base64url");
+      const id = hash(randomBytes(32).toString("base64url"));
       this.db.prepare("INSERT INTO users VALUES (?,NULL) ON CONFLICT(id) DO NOTHING").run(userId);
       this.db.prepare("INSERT INTO sessions VALUES (?,?,?,?)").run(hash(token), userId, this.now(), this.now() + 180 * 86400_000);
-      this.db.prepare("UPDATE invitations SET result=?,actor=? WHERE id=?").run(this.seal(token, String(row.id)), userId, row.id);
-      return true;
+      this.db.prepare("INSERT INTO invitations VALUES (?,?,'login',NULL,?,?,?)").run(id, hash(code), userId, this.seal(token, id), this.now() + 300_000);
+      return { code, expiresIn: 300 };
     });
   }
 
-  /** One collection: the console reads the token once, and the nonce dies with it. */
-  claimLogin(nonce: string) {
+  /** One use: the code dies as the session is handed over. */
+  claimLogin(code: string): { token: string } {
     return this.transaction(() => {
-      const row = this.db.prepare("SELECT * FROM invitations WHERE code=? AND kind='login' AND expires>?").get(hash(nonce), this.now()) as Invitation | undefined;
-      if (!row) return { status: "expired" as const };
-      if (!row.result) return { status: "waiting" as const };
+      const row = this.db.prepare("SELECT * FROM invitations WHERE code=? AND kind='login' AND expires>?").get(hash(code), this.now()) as Invitation | undefined;
+      if (!row?.result) return fail(404, "Код не найден или истёк");
       const token = this.open<string>(row.result, row.id);
       this.db.prepare("DELETE FROM invitations WHERE id=?").run(row.id);
-      return { status: "ready" as const, token };
+      return { token };
     });
   }
 

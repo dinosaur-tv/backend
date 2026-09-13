@@ -21,63 +21,74 @@ function fixture(t: TestContext) {
   return { homes, advance: (ms: number) => { now += ms; } };
 }
 
-test("ссылка из бота превращается в сессию, и второй раз её забрать нельзя", (t) => {
-  const { homes } = fixture(t);
-  const { nonce } = homes.startLogin();
+/** claimLogin throws on a bad code; the tests care about the status, not the stack. */
+function refusal(homes: Households, code: string): number | undefined {
+  try {
+    homes.claimLogin(code);
+    return undefined;
+  } catch (error) {
+    return (error as { statusCode?: number }).statusCode;
+  }
+}
 
-  assert.deepEqual(homes.claimLogin(nonce), { status: "waiting" });
-  assert.equal(homes.bindLogin(nonce, "777"), true);
-
-  const claimed = homes.claimLogin(nonce);
-  assert.equal(claimed.status, "ready");
-  assert.equal(homes.session(claimed.token), "777");
-
-  // Одноразовость: повторный заход по той же ссылке ничего не даёт.
-  assert.deepEqual(homes.claimLogin(nonce), { status: "expired" });
-});
-
-test("чужой или выдуманный nonce не открывает сессию", (t) => {
-  const { homes } = fixture(t);
-  homes.startLogin();
-  assert.equal(homes.bindLogin("выдуманный-nonce-которого-нет", "777"), false);
-  assert.deepEqual(homes.claimLogin("выдуманный-nonce-которого-нет"), { status: "expired" });
-  assert.equal(homes.session("подобранный-токен"), undefined);
-  assert.equal(homes.session(undefined), undefined);
-});
-
-test("ссылка живёт пять минут и после этого мертва", (t) => {
-  const { homes, advance } = fixture(t);
-  const { nonce, expiresIn } = homes.startLogin();
-  assert.equal(expiresIn, 300);
-  advance(301_000);
-  assert.equal(homes.bindLogin(nonce, "777"), false);
-  assert.deepEqual(homes.claimLogin(nonce), { status: "expired" });
-});
-
-test("вход даёт того же человека, что и мини-апп: дома и роли общие", (t) => {
+test("код из бота открывает сессию того же человека", (t) => {
   const { homes } = fixture(t);
   const home = homes.create("777", "Мой дом");
-  const { nonce } = homes.startLogin();
-  homes.bindLogin(nonce, "777");
-  const { token } = homes.claimLogin(nonce) as { token: string };
+  const { code, expiresIn } = homes.issueLoginCode("777");
 
-  const userId = homes.session(token)!;
-  assert.equal(userId, "777");
-  assert.deepEqual(homes.list(userId).map((h) => h.id), [home.id]);
-  assert.equal(homes.access(userId).role, "owner");
+  assert.match(code, /^\d{8}$/, "восемь цифр отличают вход от кода экрана и приглашения");
+  assert.equal(expiresIn, 300);
+
+  const { token } = homes.claimLogin(code) as { token: string };
+  assert.equal(homes.session(token), "777");
+  assert.deepEqual(homes.list("777").map((h) => h.id), [home.id]);
+  assert.equal(homes.access("777").role, "owner");
 });
 
-test("выход закрывает именно эту сессию, остальные живут", (t) => {
+test("код одноразовый, а подобранный не подходит", (t) => {
   const { homes } = fixture(t);
-  const first = homes.startLogin();
-  homes.bindLogin(first.nonce, "777");
-  const one = (homes.claimLogin(first.nonce) as { token: string }).token;
+  const { code } = homes.issueLoginCode("777");
+  homes.claimLogin(code);
+  assert.equal(refusal(homes, code), 404, "второй раз тем же кодом не войти");
+  assert.equal(refusal(homes, "00000000"), 404);
+});
 
-  const second = homes.startLogin();
-  homes.bindLogin(second.nonce, "777");
-  const two = (homes.claimLogin(second.nonce) as { token: string }).token;
+test("код живёт пять минут", (t) => {
+  const { homes, advance } = fixture(t);
+  const { code } = homes.issueLoginCode("777");
+  advance(301_000);
+  assert.equal(refusal(homes, code), 404);
+});
 
+test("новый код отменяет предыдущий: в чате всегда действует последний", (t) => {
+  const { homes } = fixture(t);
+  const first = homes.issueLoginCode("777").code;
+  const second = homes.issueLoginCode("777").code;
+  assert.notEqual(first, second);
+  assert.equal(refusal(homes, first), 404, "старый код в переписке уже не работает");
+  assert.equal(homes.session((homes.claimLogin(second) as { token: string }).token), "777");
+});
+
+test("код одного человека не даёт доступа к дому другого", (t) => {
+  const { homes } = fixture(t);
+  homes.create("777", "Мой дом");
+  const { code } = homes.issueLoginCode("999");
+  const { token } = homes.claimLogin(code) as { token: string };
+  assert.equal(homes.session(token), "999");
+  assert.deepEqual(homes.list("999"), [], "у него своих домов нет");
+});
+
+test("выход закрывает одну сессию, остальные живут", (t) => {
+  const { homes } = fixture(t);
+  const one = (homes.claimLogin(homes.issueLoginCode("777").code) as { token: string }).token;
+  const two = (homes.claimLogin(homes.issueLoginCode("777").code) as { token: string }).token;
   homes.signOut(one);
-  assert.equal(homes.session(one), undefined, "телефон, с которого вышли");
+  assert.equal(homes.session(one), undefined);
   assert.equal(homes.session(two), "777", "второе устройство остаётся внутри");
+});
+
+test("выдуманный токен сессии не пускает", (t) => {
+  const { homes } = fixture(t);
+  assert.equal(homes.session("подобранный-токен"), undefined);
+  assert.equal(homes.session(undefined), undefined);
 });

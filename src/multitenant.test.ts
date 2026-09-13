@@ -110,7 +110,9 @@ test("участник подключает свободный календар�
 });
 test("бот принимает новых людей, но команды исполняет только в их активном доме", async (t) => {
   const f = await fixture(t), webhook = (id: number, text: string) => f.app.inject({ method: "POST", url: "/v1/telegram/webhook", headers: { "x-telegram-bot-api-secret-token": f.config.TELEGRAM_WEBHOOK_SECRET }, payload: { message: { chat: { id }, from: { id }, text } } });
-  assert.match((await webhook(3, "/start")).json().text, /создай дом/i);
+  const greeting = (await webhook(3, "/start")).json().text;
+  assert.match(greeting, /созда/i, "новому человеку говорят, что дом нужно создать");
+  assert.match(greeting, /\d{4} \d{4}/, "и сразу дают код для входа на телефоне");
   assert.equal(f.db.list("3").length, 0);
   await webhook(1, "/tomorrow");
   assert.equal(f.db.state(f.a.id).read().display.mode, "TOMORROW"); assert.equal(f.db.state(f.b.id).read().display.mode, "TODAY");
