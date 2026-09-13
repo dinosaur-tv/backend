@@ -33,7 +33,9 @@ export class Households {
       CREATE TABLE IF NOT EXISTS invitations (id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL, kind TEXT NOT NULL, home_id TEXT REFERENCES homes(id) ON DELETE CASCADE, actor TEXT, result TEXT, expires INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS members_user ON members(user_id);
       CREATE INDEX IF NOT EXISTS devices_home ON devices(home_id);
-      CREATE INDEX IF NOT EXISTS invitations_home ON invitations(home_id);`);
+      CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS invitations_home ON invitations(home_id);
+      CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);`);
     this.migrate();
   }
   close() { this.db.close(); }
@@ -187,6 +189,59 @@ export class Households {
       return this.access(userId, row.home_id!);
     });
   }
+  /**
+   * Signing in outside Telegram: the console asks for a nonce, the person opens the bot
+   * with it, and the bot binds the nonce to whoever sent it. The window is deliberately
+   * short — anyone who talks a person into forwarding their link would be handed the
+   * session, and a few minutes is the whole of that opportunity.
+   */
+  startLogin() {
+    return this.transaction(() => {
+      this.db.prepare("DELETE FROM invitations WHERE expires<=?").run(this.now());
+      if (Number(this.db.prepare("SELECT count(*) AS n FROM invitations WHERE kind='login'").get()!.n) >= 200) {
+        fail(429, "Слишком много попыток входа. Попробуйте через несколько минут");
+      }
+      const nonce = randomBytes(24).toString("base64url");
+      this.db.prepare("INSERT INTO invitations VALUES (?,?,'login',NULL,NULL,NULL,?)").run(hash(nonce), hash(nonce), this.now() + 300_000);
+      return { nonce, expiresIn: 300 };
+    });
+  }
+
+  bindLogin(nonce: string, userId: string): boolean {
+    return this.transaction(() => {
+      const row = this.db.prepare("SELECT id FROM invitations WHERE code=? AND kind='login' AND expires>? AND result IS NULL").get(hash(nonce), this.now());
+      if (!row) return false;
+      const token = randomBytes(32).toString("base64url");
+      this.db.prepare("INSERT INTO users VALUES (?,NULL) ON CONFLICT(id) DO NOTHING").run(userId);
+      this.db.prepare("INSERT INTO sessions VALUES (?,?,?,?)").run(hash(token), userId, this.now(), this.now() + 180 * 86400_000);
+      this.db.prepare("UPDATE invitations SET result=?,actor=? WHERE id=?").run(this.seal(token, String(row.id)), userId, row.id);
+      return true;
+    });
+  }
+
+  /** One collection: the console reads the token once, and the nonce dies with it. */
+  claimLogin(nonce: string) {
+    return this.transaction(() => {
+      const row = this.db.prepare("SELECT * FROM invitations WHERE code=? AND kind='login' AND expires>?").get(hash(nonce), this.now()) as Invitation | undefined;
+      if (!row) return { status: "expired" as const };
+      if (!row.result) return { status: "waiting" as const };
+      const token = this.open<string>(row.result, row.id);
+      this.db.prepare("DELETE FROM invitations WHERE id=?").run(row.id);
+      return { status: "ready" as const, token };
+    });
+  }
+
+  session(token: string | undefined): string | undefined {
+    if (!token || token.length > 256) return undefined;
+    this.db.prepare("DELETE FROM sessions WHERE expires<=?").run(this.now());
+    const row = this.db.prepare("SELECT user_id FROM sessions WHERE token_hash=? AND expires>?").get(hash(token), this.now());
+    return row ? String(row.user_id) : undefined;
+  }
+
+  signOut(token: string | undefined) {
+    if (token) this.db.prepare("DELETE FROM sessions WHERE token_hash=?").run(hash(token));
+  }
+
   revokeDevice(access: Access, id: string) {
     this.owner(access);
     this.db.prepare("DELETE FROM devices WHERE home_id=? AND id=?").run(access.homeId, id);

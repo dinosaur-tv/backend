@@ -41,6 +41,8 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     return instance;
   }
   function telegram(request: FastifyRequest): string | undefined {
+    const session = homes.session(first(request.headers["x-dino-session"]));
+    if (session) return session;
     if (!config.TELEGRAM_BOT_TOKEN) return;
     const id = verifiedTelegramWebAppUserId(first(request.headers["x-telegram-init-data"]), config.TELEGRAM_BOT_TOKEN);
     return id ? String(id) : undefined;
@@ -54,7 +56,7 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     const userId = telegram(request);
     if (userId) return homes.access(userId, selected);
     // Неверная подпись не может незаметно переключить пользователя на другой способ входа.
-    if (request.headers["x-telegram-init-data"]) return fail(401, "Откройте мини-приложение заново из бота");
+    if (request.headers["x-telegram-init-data"] || request.headers["x-dino-session"]) return fail(401, "Войдите заново");
     const auth = homes.device(first(request.headers["x-dino-home-token"]), "phone");
     if (selected && auth.homeId !== selected) fail(403, "Телефон привязан к другому дому");
     return auth;
@@ -86,7 +88,7 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     reply.header("Cache-Control", "no-store").header("Referrer-Policy", "no-referrer").header("X-Content-Type-Options", "nosniff");
     if (request.headers.origin === config.MINI_APP_ORIGIN) {
       reply.header("Access-Control-Allow-Origin", config.MINI_APP_ORIGIN).header("Vary", "Origin")
-        .header("Access-Control-Allow-Headers", "content-type, authorization, x-telegram-init-data, x-dino-visible, x-dino-home-token, x-dino-home-id")
+        .header("Access-Control-Allow-Headers", "content-type, authorization, x-telegram-init-data, x-dino-visible, x-dino-home-token, x-dino-home-id, x-dino-session")
         .header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
       if (request.method === "OPTIONS") return reply.code(204).send();
     }
@@ -119,6 +121,31 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
       return reply.redirect(target.toString());
     }
     return forward(prefix, request, reply);
+  });
+  let botName = "";
+  async function botUsername(): Promise<string> {
+    if (botName || !config.TELEGRAM_BOT_TOKEN) return botName;
+    try {
+      const answer = await fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/getMe`, { signal: AbortSignal.timeout(5_000) });
+      const data = await answer.json() as { result?: { username?: string } };
+      botName = data.result?.username ?? "";
+    } catch { /* the link falls back to the configured web app */ }
+    return botName;
+  }
+  app.post("/v1/miniapp/login/start", async (request, reply) => {
+    if (!config.TELEGRAM_BOT_TOKEN) return reply.code(503).send({ error: "Вход через Telegram не настроен" });
+    if (!attempts.allow("login:" + request.ip, 10, 600_000)) fail(429, "Слишком много попыток входа. Подождите немного");
+    const started = homes.startLogin();
+    const username = await botUsername();
+    return { ...started, link: username ? `https://t.me/${username}?start=${started.nonce}` : null };
+  });
+  app.get("/v1/miniapp/login/wait", async (request) => {
+    const { nonce } = z.object({ nonce: z.string().min(8).max(128) }).parse(request.query);
+    return homes.claimLogin(nonce);
+  });
+  app.post("/v1/miniapp/logout", async (request) => {
+    homes.signOut(first(request.headers["x-dino-session"]));
+    return { ok: true };
   });
   app.get("/v1/miniapp/households", async (request) => {
     const userId = telegram(request);
@@ -216,6 +243,10 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     if (!message?.text || !message.from || message.chat.id !== message.from.id) return { ok: true };
     const userId = String(message.from.id);
     if (!attempts.allow("bot:" + userId, 30, 60_000)) return { ok: true };
+    const deepLink = /^\/start(?:@\w+)?\s+([A-Za-z0-9_-]{16,128})$/.exec(message.text.trim());
+    if (deepLink && homes.bindLogin(deepLink[1], userId)) {
+      return telegramWebhookReply(message.chat.id, { text: "Вход подтверждён. Возвращайтесь в приложение — оно уже открыто на вашем доме." }, config.TELEGRAM_WEB_APP_URL);
+    }
     const list = homes.list(userId);
     if (!list.length) return telegramWebhookReply(message.chat.id, { openMiniApp: true, text: config.REGISTRATION_OPEN
       ? "Привет! Давай настроим твой домашний экран. Открой приложение ниже: создай дом, подключи календарь и введи код с телевизора. Данные других домов тебе не видны."
