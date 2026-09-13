@@ -204,15 +204,24 @@ export interface StoredState {
   pairings?: StoredPairing[];
 }
 
+/** One of the people whose calendar holds an event. */
+export interface EventOwner {
+  label: string;
+  color: string;
+}
+
 export interface SnapshotEvent {
   id: string;
   title: string;
   start: string;
   end: string;
   calendarName: string;
+  /** Everyone who has it, as one phrase: «Миша и Наташа». */
   ownerName: string;
   color: string;
   allDay: boolean;
+  /** The same people, apart, so the screen can draw a dot for each. */
+  owners?: EventOwner[];
 }
 
 export interface WeatherPeriod {

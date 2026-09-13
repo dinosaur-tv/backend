@@ -3,6 +3,7 @@ import { OAuthStates } from "./oauth-state.js";
 import { google } from "googleapis";
 import type { Config } from "./config.js";
 import type { StateStore } from "./store.js";
+import { mergeShared, type TaggedEvent } from "./shared-events.js";
 import { freeCalendarColor, type Person, type SnapshotEvent } from "./types.js";
 
 const timezone = "Europe/Moscow";
@@ -116,12 +117,16 @@ export class GoogleCalendarService {
             } while (pageToken && items.length < 1000);
             return items;
           }));
-          return calendars.flat().flatMap((event): SnapshotEvent[] => {
+          return calendars.flat().flatMap((event): TaggedEvent[] => {
             const start = event.start?.dateTime ?? event.start?.date;
             const end = event.end?.dateTime ?? event.end?.date;
             if (!start || !end) return [];
+            // Every copy of an invitation carries the same iCalUID; the instance start
+            // keeps the occurrences of a weekly event apart.
+            const uid = event.iCalUID ? `${event.iCalUID}:${start}` : "";
             return [{
               id: `${person}:${event.iCalUID ?? event.id ?? randomBytes(6).toString("hex")}:${start}`,
+              uid,
               title: event.summary?.trim() || "Без названия",
               start,
               end,
@@ -136,7 +141,7 @@ export class GoogleCalendarService {
         }
       }),
     );
-    return groups.flat().sort((a, b) => a.start.localeCompare(b.start)).slice(0, 2000);
+    return mergeShared(groups.flat()).slice(0, 2000);
   }
 
   private client() {
