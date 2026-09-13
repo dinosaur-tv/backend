@@ -68,7 +68,7 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     const known = new Map(live.map((screen) => [screen.id, screen]));
     return homes.screens(auth).map((screen) => ({
       online: false, power: "on", nowPlaying: null, music: { connected: false },
-      ...(known.get(screen.id) ?? {}), id: screen.id, label: screen.label,
+      ...(known.get(screen.id) ?? {}), id: screen.id, label: screen.label, seen: screen.seen ?? null,
     }));
   }
   function tvAccess(request: FastifyRequest) {
@@ -112,7 +112,7 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     reply.header("Cache-Control", "no-store").header("Referrer-Policy", "no-referrer").header("X-Content-Type-Options", "nosniff");
     if (request.headers.origin === config.MINI_APP_ORIGIN) {
       reply.header("Access-Control-Allow-Origin", config.MINI_APP_ORIGIN).header("Vary", "Origin")
-        .header("Access-Control-Allow-Headers", "content-type, authorization, x-telegram-init-data, x-dino-visible, x-dino-home-token, x-dino-home-id, x-dino-session")
+        .header("Access-Control-Allow-Headers", "content-type, authorization, x-telegram-init-data, x-dino-visible, x-dino-screen-name, x-dino-home-token, x-dino-home-id, x-dino-session")
         .header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
       if (request.method === "OPTIONS") return reply.code(204).send();
     }
@@ -219,6 +219,10 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     { method: "GET", url: "/v1/display/snapshot" }, { method: "POST", url: "/v1/display/now-playing" },
   ] as const) app.route({ ...route, handler: async (request, reply) => {
     const auth = tvAccess(request);
+    homes.sawDevice(auth.deviceId);
+    // A screen that knows its own make offers it; a name somebody typed always wins.
+    const described = first(request.headers["x-dino-screen-name"]);
+    if (described) homes.describeDevice(auth.deviceId, described);
     return forward(auth.homeId, request, reply, request.url, () => tvAccess(request), auth.deviceId);
   } });
   // Только перечисленные маршруты достижимы снаружи. Внутренние заголовки клиента никогда не пересылаются.

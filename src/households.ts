@@ -7,6 +7,8 @@ import { emptyState, EncryptedStore, type StateStore } from "./store.js";
 import { defaultPlace, normalizeCalendars, normalizePlace, normalizeRotation, type StoredState } from "./types.js";
 
 export const fail = (statusCode: number, message: string): never => { throw Object.assign(new Error(message), { statusCode }); };
+/** «Телевизор», «Телефон 3» — a name nobody has chosen, so a screen may replace it with its own. */
+const isDefaultLabel = (label: string) => /^(Телевизор|Телефон)( \d{1,2})?$/.test(label);
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export type Role = "owner" | "member";
 export type Access = { homeId: string; userId: string; role: Role; deviceId?: string };
@@ -36,6 +38,9 @@ export class Households {
       CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS invitations_home ON invitations(home_id);
       CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);`);
+    // Homes that predate the column keep their devices; they simply have never been seen yet.
+    const columns = this.db.prepare("PRAGMA table_info(devices)").all() as { name: string }[];
+    if (!columns.some((column) => column.name === "seen")) this.db.exec("ALTER TABLE devices ADD COLUMN seen INTEGER");
     this.migrate();
   }
   close() { this.db.close(); }
@@ -120,12 +125,37 @@ export class Households {
   }
   devices(access: Access) {
     this.owner(access);
-    return this.db.prepare("SELECT id,kind,label,created,expires FROM devices WHERE home_id=? AND expires>?").all(access.homeId, this.now());
+    return this.db.prepare("SELECT id,kind,label,created,expires,seen FROM devices WHERE home_id=? AND expires>?").all(access.homeId, this.now());
+  }
+  /**
+   * A television says hello every few seconds, and writing that down every time would be a
+   * needless write per second per screen. A minute is close enough to answer the only
+   * question anyone asks of it: is this one still in the house, or long gone?
+   */
+  sawDevice(id: string | undefined): void {
+    if (!id) return;
+    const row = this.db.prepare("SELECT seen FROM devices WHERE id=?").get(id);
+    if (!row) return;
+    const seen = Number(row.seen ?? 0);
+    if (this.now() - seen < 60_000) return;
+    this.db.prepare("UPDATE devices SET seen=? WHERE id=?").run(this.now(), id);
+  }
+  /**
+   * A screen can say what it is — «LG 43UQ81» rather than «Телевизор». It is allowed to
+   * fill in a name nobody has chosen, and never to overwrite one somebody typed.
+   */
+  describeDevice(id: string | undefined, described: string): void {
+    if (!id) return;
+    const label = described.trim().slice(0, 40);
+    if (!label) return;
+    const row = this.db.prepare("SELECT label FROM devices WHERE id=?").get(id);
+    if (!row || !isDefaultLabel(String(row.label)) || String(row.label) === label) return;
+    this.db.prepare("UPDATE devices SET label=? WHERE id=?").run(label, id);
   }
   /** The televisions, for anyone in the home: a remote has to know what it can aim at. */
-  screens(access: Access): { id: string; label: string }[] {
+  screens(access: Access): { id: string; label: string; seen?: number }[] {
     this.access(access.userId, access.homeId);
-    return this.db.prepare("SELECT id,label FROM devices WHERE home_id=? AND kind='tv' AND expires>? ORDER BY created").all(access.homeId, this.now()) as { id: string; label: string }[];
+    return this.db.prepare("SELECT id,label,seen FROM devices WHERE home_id=? AND kind='tv' AND expires>? ORDER BY created").all(access.homeId, this.now()) as { id: string; label: string; seen?: number }[];
   }
   /**
    * A house with two televisions needs to tell them apart, so every member may name one.
@@ -146,7 +176,7 @@ export class Households {
   private issueDevice(homeId: string, actor: string, kind: "tv" | "phone", token = randomBytes(32).toString("base64url")) {
     this.db.prepare("DELETE FROM devices WHERE expires<=?").run(this.now());
     if (Number(this.db.prepare("SELECT count(*) AS n FROM devices WHERE home_id=?").get(homeId)!.n) >= 16) fail(409, "Удалите ненужное устройство: максимум 16 на дом");
-    this.db.prepare("INSERT INTO devices VALUES (?,?,?,?,?,?,?,?)").run(randomUUID(), homeId, actor, kind, hash(token), this.nextLabel(homeId, kind), this.now(), this.now() + 365 * 86400_000);
+    this.db.prepare("INSERT INTO devices (id,home_id,actor,kind,token_hash,label,created,expires) VALUES (?,?,?,?,?,?,?,?)").run(randomUUID(), homeId, actor, kind, hash(token), this.nextLabel(homeId, kind), this.now(), this.now() + 365 * 86400_000);
     return token;
   }
   /** The second television is not another «Телевизор»: it is «Телевизор 2» until it is named. */
