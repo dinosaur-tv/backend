@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import test, { type TestContext } from "node:test";
 import { loadConfig } from "./config.js";
 import { Households } from "./households.js";
+import { defaultPlace } from "./types.js";
 import { EncryptedStore } from "./store.js";
 import { OAuthStates } from "./oauth-state.js";
 
@@ -131,4 +132,14 @@ test("перенос существующих календарей не изме
   assert.equal(db.device("old-tv-secret", "tv").homeId, db.access("1").homeId);
   const fresh = db.create("3", "Новый"); assert.deepEqual(db.state(fresh.id).read().oauth, {});
   assert.throws(() => db.device("old-phone-hash", "phone"));
+});
+
+test("дом, сохранённый до появления поля, читается с подставленным местом", (t) => {
+  const { db } = fixture(t);
+  const home = db.create("1", "Мой дом");
+  // Записываем состояние без place — так выглядят дома, созданные прежней версией.
+  db.state(home.id).update((state) => { delete (state.display as Partial<typeof state.display>).place; });
+  const read = db.state(home.id).read();
+  assert.deepEqual(read.display.place, defaultPlace());
+  assert.equal(read.display.rotation.enabled, true);
 });

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Config } from "./config.js";
 import { emptyState, EncryptedStore, type StateStore } from "./store.js";
-import { people, type StoredState } from "./types.js";
+import { defaultPlace, normalizePlace, normalizeRotation, people, type StoredState } from "./types.js";
 
 export const fail = (statusCode: number, message: string): never => { throw Object.assign(new Error(message), { statusCode }); };
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -68,7 +68,12 @@ export class Households {
   private read(id: string): StoredState {
     const row = this.db.prepare("SELECT state FROM homes WHERE id=?").get(id);
     if (!row) return fail(404, "Дом недоступен");
-    return this.open<StoredState>(String(row.state), id);
+    const state = this.open<StoredState>(String(row.state), id);
+    // A home stored before a display field existed has to gain it on the way out, or
+    // every reader would have to guard for it. Homes predate `place`, for one.
+    state.display.place = normalizePlace(state.display.place) ?? defaultPlace();
+    state.display.rotation = normalizeRotation(state.display.rotation);
+    return state;
   }
   list(userId: string): Household[] {
     return this.db.prepare("SELECT h.id,h.name,m.role FROM homes h JOIN members m ON h.id=m.home_id WHERE m.user_id=? ORDER BY h.rowid").all(userId) as Household[];
