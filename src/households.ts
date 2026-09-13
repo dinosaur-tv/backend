@@ -122,6 +122,20 @@ export class Households {
     this.owner(access);
     return this.db.prepare("SELECT id,kind,label,created,expires FROM devices WHERE home_id=? AND expires>?").all(access.homeId, this.now());
   }
+  /** The televisions, for anyone in the home: a remote has to know what it can aim at. */
+  screens(access: Access): { id: string; label: string }[] {
+    this.access(access.userId, access.homeId);
+    return this.db.prepare("SELECT id,label FROM devices WHERE home_id=? AND kind='tv' AND expires>? ORDER BY created").all(access.homeId, this.now()) as { id: string; label: string }[];
+  }
+  /**
+   * A house with two televisions needs to tell them apart, so every member may name one.
+   * Only the name changes: the device keeps its token and its place in the household.
+   */
+  renameDevice(access: Access, id: string, label: string) {
+    this.access(access.userId, access.homeId);
+    const changed = this.db.prepare("UPDATE devices SET label=? WHERE id=? AND home_id=?").run(label, id, access.homeId);
+    if (!changed.changes) fail(404, "Это устройство уже отключено");
+  }
   device(token: string | undefined, kind: "tv" | "phone"): Access {
     if (!token || token.length > 256) return fail(401, "Устройство не привязано. Введите код с его экрана");
     const row = this.db.prepare("SELECT id,home_id,actor FROM devices WHERE token_hash=? AND kind=? AND expires>?").get(hash(token), kind, this.now());
@@ -132,8 +146,16 @@ export class Households {
   private issueDevice(homeId: string, actor: string, kind: "tv" | "phone", token = randomBytes(32).toString("base64url")) {
     this.db.prepare("DELETE FROM devices WHERE expires<=?").run(this.now());
     if (Number(this.db.prepare("SELECT count(*) AS n FROM devices WHERE home_id=?").get(homeId)!.n) >= 16) fail(409, "Удалите ненужное устройство: максимум 16 на дом");
-    this.db.prepare("INSERT INTO devices VALUES (?,?,?,?,?,?,?,?)").run(randomUUID(), homeId, actor, kind, hash(token), kind === "tv" ? "Телевизор" : "Телефон", this.now(), this.now() + 365 * 86400_000);
+    this.db.prepare("INSERT INTO devices VALUES (?,?,?,?,?,?,?,?)").run(randomUUID(), homeId, actor, kind, hash(token), this.nextLabel(homeId, kind), this.now(), this.now() + 365 * 86400_000);
     return token;
+  }
+  /** The second television is not another «Телевизор»: it is «Телевизор 2» until it is named. */
+  private nextLabel(homeId: string, kind: "tv" | "phone"): string {
+    const base = kind === "tv" ? "Телевизор" : "Телефон";
+    const taken = new Set((this.db.prepare("SELECT label FROM devices WHERE home_id=? AND kind=?").all(homeId, kind) as { label: string }[]).map((row) => row.label));
+    if (!taken.has(base)) return base;
+    for (let number = 2; number <= 16; number++) if (!taken.has(`${base} ${number}`)) return `${base} ${number}`;
+    return base;
   }
   invite(kind: "tv" | "phone" | "member", access?: Access) {
     if (kind !== "tv") {

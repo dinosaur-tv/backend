@@ -23,14 +23,17 @@ import {
   type DisplayTheme,
   type SnapshotEvent,
 } from "./types.js";
-import { MusicDesk, musicActions } from "./music.js";
-import { TvDesk, tvApps, tvKeys } from "./tv-command.js";
-import { parseTvVisible, TvPresence } from "./tv-presence.js";
+import { musicActions } from "./music.js";
+import { tvApps, tvKeys } from "./tv-command.js";
+import { parseTvVisible } from "./tv-presence.js";
+import { power, Screens, screenState, setScreen } from "./screens.js";
 
 setDefaultResultOrder("ipv4first");
 
 /** A calendar account id: the two names the first homes used, or hex minted since. */
 const personSchema = z.string().regex(/^[a-z0-9]{1,32}$/);
+/** A screen is addressed by its device id, which the household hands out as a uuid. */
+const screenIdSchema = z.string().uuid();
 /** The name over a calendar's events. It reaches a screen and an HTML page, so it stays short. */
 const labelSchema = z.string().trim().min(1).max(60);
 
@@ -43,9 +46,7 @@ function escapeHtml(value: string): string {
 export function createHomeApp(config: Config, store: StateStore, dataDir: string, homeId: string, internalToken: string) {
   const backgrounds = new BackgroundStore(join(dataDir, "backgrounds", homeId));
   const calendars = new GoogleCalendarService(config, store, homeId);
-  const music = new MusicDesk();
-  const tvDesk = new TvDesk();
-  const tvPresence = new TvPresence();
+  const screens = new Screens();
   const app = Fastify({
     logger: false,
     trustProxy: config.TRUST_PROXY ? config.TRUST_PROXY.split(",").map((item) => item.trim()) : false,
@@ -229,10 +230,14 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
 
   app.get("/v1/display/snapshot", async (request, reply) => {
     requireDisplayAccess(request.headers.authorization);
-    tvPresence.touch(parseTvVisible(firstHeader(request.headers["x-dino-visible"])));
+    // The gateway knows which television is asking; everything below is that one's own.
+    const room = screens.at(firstHeader(request.headers["x-dino-device"]));
+    room.presence.touch(parseTvVisible(firstHeader(request.headers["x-dino-visible"])));
     await livingRoomFeed();
     const state = store.read();
     const note = liveNote(state.display.note);
+    const mine = screenState(state, room.id);
+    const track = room.music.snapshot();
     return reply.header("Cache-Control", "no-store").send({
       generatedAt: new Date().toISOString(),
       timezone: state.display.place.timezone,
@@ -242,16 +247,16 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
         note,
         backgroundUrl: state.display.background ? backgroundUrl(state.display.background.id) : undefined,
       },
-      reloadAt: state.tvReloadAt,
-      power: state.tvPower === "off" ? "off" : "on",
-      powerAt: state.tvPowerAt,
-      nowPlaying: music.snapshot().nowPlaying ?? null,
-      music: { connected: music.snapshot().connected },
-      musicCommand: music.snapshot().command ?? null,
+      reloadAt: mine.reloadAt,
+      power: power(state, room.id),
+      powerAt: mine.powerAt,
+      nowPlaying: track.nowPlaying ?? null,
+      music: { connected: track.connected },
+      musicCommand: track.command ?? null,
       features,
       calendars: calendars.accounts(),
-      tvCommand: config.TV_REMOTE_ENABLED ? (tvDesk.snapshot().command ?? null) : null,
-      tvCommands: config.TV_REMOTE_ENABLED ? tvDesk.snapshot().commands : [],
+      tvCommand: config.TV_REMOTE_ENABLED ? (room.tv.snapshot().command ?? null) : null,
+      tvCommands: config.TV_REMOTE_ENABLED ? room.tv.snapshot().commands : [],
       inviteCode: null,
     });
   });
@@ -268,8 +273,9 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
 
   app.post("/v1/display/now-playing", async (request) => {
     requireDisplayAccess(request.headers.authorization);
-    music.hearFromTv(request.body);
-    return { ok: true, nowPlaying: music.snapshot().nowPlaying ?? null };
+    const room = screens.at(firstHeader(request.headers["x-dino-device"]));
+    room.music.hearFromTv(request.body);
+    return { ok: true, nowPlaying: room.music.snapshot().nowPlaying ?? null };
   });
 
   app.get("/v1/miniapp/state", async (request) => {
@@ -286,8 +292,9 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
       },
       tvLinked: Boolean(state.tvLinked),
       ...tvView(state),
-      nowPlaying: music.snapshot().nowPlaying ?? null,
-      music: { connected: music.snapshot().connected },
+      screens: screenView(state),
+      nowPlaying: houseMusic().nowPlaying ?? null,
+      music: { connected: houseMusic().connected },
     };
   });
 
@@ -317,6 +324,8 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
         }).optional(),
         reloadTv: z.boolean().optional(),
         tvPower: z.enum(["on", "off"]).optional(),
+        /** Which television this is about. Absent means every one of them. */
+        screen: screenIdSchema.optional(),
         rotation: z
           .object({
             enabled: z.boolean().optional(),
@@ -356,11 +365,8 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
         backgrounds.remove(state.display.background?.id);
         state.display.background = undefined;
       }
-      if (body.reloadTv) state.tvReloadAt = new Date().toISOString();
-      if (body.tvPower) {
-        state.tvPower = body.tvPower;
-        state.tvPowerAt = new Date().toISOString();
-      }
+      if (body.reloadTv) setScreen(state, body.screen, { reloadAt: new Date().toISOString() });
+      if (body.tvPower) setScreen(state, body.screen, { power: body.tvPower, powerAt: new Date().toISOString() });
       if (body.rotation) {
         state.display.rotation = normalizeRotation({ ...state.display.rotation, ...body.rotation });
       }
@@ -371,9 +377,10 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
         note: liveNote(updated.display.note),
         backgroundUrl: updated.display.background ? backgroundUrl(updated.display.background.id) : undefined,
       },
-      ...tvView(updated),
-      nowPlaying: music.snapshot().nowPlaying ?? null,
-      music: { connected: music.snapshot().connected },
+      ...tvView(updated, body.screen),
+      screens: screenView(updated),
+      nowPlaying: houseMusic().nowPlaying ?? null,
+      music: { connected: houseMusic().connected },
     };
   });
 
@@ -383,24 +390,27 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
       .object({
         action: z.enum(musicActions),
         volume: z.number().min(0).max(100).optional(),
+        screen: screenIdSchema.optional(),
       })
       .parse(request.body);
+    // Without a screen the phone means the one that is actually playing.
+    const room = body.screen ? screens.at(body.screen) : screens.all().find((item) => item.music.snapshot().nowPlaying) ?? screens.at(body.screen);
     if (body.action === "toTv") {
-      const updated = store.update((state) => {
-        state.tvPower = "on";
-        state.tvPowerAt = new Date().toISOString();
-      });
+      const updated = store.update((state) => setScreen(state, body.screen, { power: "on", powerAt: new Date().toISOString() }));
+      const track = room.music.snapshot();
       return {
-        nowPlaying: music.snapshot().nowPlaying ?? null,
-        music: { connected: music.snapshot().connected },
-        ...tvView(updated),
+        nowPlaying: track.nowPlaying ?? null,
+        music: { connected: track.connected },
+        screens: screenView(updated),
+        ...tvView(updated, body.screen),
       };
     }
-    const result = await music.command(body.action, body.volume);
+    const result = await room.music.command(body.action, body.volume);
     return {
       nowPlaying: result.nowPlaying ?? null,
       music: { connected: result.connected },
-      ...tvView(),
+      screens: screenView(),
+      ...tvView(store.read(), body.screen),
     };
   });
 
@@ -408,26 +418,24 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
     requireMiniAppUser(request);
     requireRemoteEnabled(config.TV_REMOTE_ENABLED);
     const body = z
-      .union([z.object({ action: z.literal("launch"), app: z.enum(tvApps) }), z.object({ action: z.literal("key"), key: z.enum(tvKeys) })])
+      .union([
+        z.object({ action: z.literal("launch"), app: z.enum(tvApps), screen: screenIdSchema.optional() }),
+        z.object({ action: z.literal("key"), key: z.enum(tvKeys), screen: screenIdSchema.optional() }),
+      ])
       .parse(request.body);
-    const command = body.action === "launch" ? tvDesk.launch(body.app) : tvDesk.key(body.key);
+    // A named screen alone; an unnamed one is an older phone that means the whole house.
+    const rooms = screens.addressed(body.screen);
+    const commands = rooms.map((room) => (body.action === "launch" ? room.tv.launch(body.app) : room.tv.key(body.key)));
     let powerState = store.read();
-    if (body.action === "launch" && body.app === "kinopoisk") {
-      powerState = store.update((state) => {
-        state.tvPower = "off";
-        state.tvPowerAt = new Date().toISOString();
-      });
-    }
-    if (body.action === "launch" && body.app === "dino") {
-      powerState = store.update((state) => {
-        state.tvPower = "on";
-        state.tvPowerAt = new Date().toISOString();
-      });
+    if (body.action === "launch") {
+      const wanted = body.app === "kinopoisk" ? "off" : body.app === "dino" ? "on" : undefined;
+      if (wanted) powerState = store.update((state) => setScreen(state, body.screen, { power: wanted, powerAt: new Date().toISOString() }));
     }
     return {
       ok: true,
-      tvCommand: command,
-      ...tvView(powerState),
+      tvCommand: commands[0],
+      screens: screenView(powerState),
+      ...tvView(powerState, body.screen),
     };
   });
 
@@ -477,11 +485,40 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
     // Авторизация выполнена шлюзом и обязательным onRequest выше.
   }
 
-  function tvView(state = store.read()) {
-    return {
-      tvOnline: tvPresence.online() && state.tvPower !== "off",
-      tvPower: state.tvPower === "off" ? ("off" as const) : ("on" as const),
-    };
+  /**
+   * What one phone sees. Naming a screen answers for that screen; naming none answers for
+   * the house, which is what a remote that predates several televisions expects.
+   */
+  function tvView(state = store.read(), id?: string) {
+    if (id) {
+      return { tvOnline: Boolean(screens.peek(id)?.presence.online()) && power(state, id) !== "off", tvPower: power(state, id) };
+    }
+    // Only the gateway knows every screen of the home; this is the house as the store has it.
+    return { tvOnline: screens.anyOnline(state), tvPower: power(state, undefined) };
+  }
+
+  /**
+   * Every screen this household has, so the phone can choose between them. A screen that
+   * was switched off and has not spoken since the last restart is still one of them, so the
+   * list is the union of what is live and what the store remembers.
+   */
+  function screenView(state = store.read()) {
+    const ids = [...new Set([...screens.all().map((room) => room.id), ...Object.keys(state.screens ?? {})])];
+    return ids.map((id) => {
+      const track = screens.peek(id)?.music.snapshot();
+      return {
+        id,
+        online: Boolean(screens.peek(id)?.presence.online()) && power(state, id) !== "off",
+        power: power(state, id),
+        nowPlaying: track?.nowPlaying ?? null,
+        music: { connected: Boolean(track?.connected) },
+      };
+    });
+  }
+
+  /** The one that is playing, for a phone that has not picked a screen. */
+  function houseMusic() {
+    return screens.anyNowPlaying();
   }
 
   function firstHeader(value: string | string[] | undefined): string | undefined {

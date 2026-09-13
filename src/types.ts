@@ -167,6 +167,16 @@ export interface DisplaySettings {
   place: DisplayPlace;
 }
 
+/**
+ * What one screen is doing. A household used to have a single set of these fields; they
+ * stay as the fallback, so a home written before screens had names keeps its television on.
+ */
+export interface StoredScreen {
+  power?: "on" | "off";
+  powerAt?: string;
+  reloadAt?: string;
+}
+
 export interface StoredPairing {
   kind?: "tv" | "home";
   pairId: string;
@@ -183,9 +193,12 @@ export interface StoredState {
   display: DisplaySettings;
   tvSession?: string;
   tvLinked?: boolean;
+  /** What every screen does when none of them has been addressed on its own. */
   tvReloadAt?: string;
   tvPower?: "on" | "off";
   tvPowerAt?: string;
+  /** Per-screen overrides, by device id. An absent screen follows the fields above. */
+  screens?: Record<string, StoredScreen>;
   homeTokens?: string[];
   /** Open TV / phone invite codes. Kept on disk so a backend restart does not orphan the digits on screen. */
   pairings?: StoredPairing[];

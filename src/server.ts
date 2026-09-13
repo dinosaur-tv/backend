@@ -63,6 +63,14 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     if (selected && auth.homeId !== selected) fail(403, "Телефон привязан к другому дому");
     return auth;
   }
+  /** Every screen of the home, named, with whatever the home app knows about each. */
+  function named(auth: Access, live: { id: string }[]) {
+    const known = new Map(live.map((screen) => [screen.id, screen]));
+    return homes.screens(auth).map((screen) => ({
+      online: false, power: "on", nowPlaying: null, music: { connected: false },
+      ...(known.get(screen.id) ?? {}), id: screen.id, label: screen.label,
+    }));
+  }
   function tvAccess(request: FastifyRequest) {
     const token = request.headers.authorization?.startsWith("Bearer ") ? request.headers.authorization.slice(7) : undefined;
     const auth = homes.device(token, "tv");
@@ -70,22 +78,35 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     if (selected && selected !== auth.homeId) fail(403, "Телевизор привязан к другому дому");
     return auth;
   }
-  async function forward(homeId: string, request: FastifyRequest, reply: FastifyReply, url = request.url, recheck?: () => unknown) {
+  async function forward(homeId: string, request: FastifyRequest, reply: FastifyReply, url = request.url, recheck?: () => unknown, device?: string) {
     const response = await household(homeId).inject({ method: request.method as "GET" | "POST" | "PATCH", url,
       headers: { "content-type": "application/json", "x-dino-internal": internalToken,
         "x-dino-visible": first(request.headers["x-dino-visible"]) ?? "true",
+        ...(device ? { "x-dino-device": device } : {}),
         ...(url === "/v1/miniapp/calendars/connect" ? { "x-dino-actor": access(request).userId } : {}),
         "x-telegram-bot-api-secret-token": config.TELEGRAM_WEBHOOK_SECRET },
       ...(request.body !== undefined ? { payload: JSON.stringify(request.body) } : {}),
     });
     recheck?.();
     reply.code(response.statusCode).type(String(response.headers["content-type"] ?? "application/json"));
-    if (url.split("?")[0] === "/v1/miniapp/state" && response.statusCode === 200) {
-      const auth = access(request), data = response.json();
+    if (response.statusCode !== 200 || !url.startsWith("/v1/miniapp/")) return reply.send(response.rawPayload);
+    const data = response.json();
+    const extra: Record<string, unknown> = {};
+    // Names live in the devices table, what each screen is doing lives in the home app —
+    // and every answer carrying screens needs both, or a phone loses the one it picked.
+    if (Array.isArray(data.screens)) extra.screens = named(access(request), data.screens);
+    if (url.split("?")[0] === "/v1/miniapp/state") {
+      const auth = access(request);
       const connected = Object.keys(homes.state(homeId).read().oauth);
-      return reply.send({ ...data, household: homes.list(auth.userId).find((home) => home.id === homeId), permissions: { manageHome: auth.role === "owner", manageCalendars: Object.fromEntries(connected.map((person) => [person, homes.calendarAccess(auth, person)])) } });
+      // The house is awake while any screen is, and dark only once every one of them is.
+      const all = (extra.screens ?? []) as { online: boolean; power: string }[];
+      extra.tvOnline = all.some((screen) => screen.online);
+      extra.tvPower = all.length && all.every((screen) => screen.power === "off") ? "off" : "on";
+      extra.household = homes.list(auth.userId).find((home) => home.id === homeId);
+      extra.permissions = { manageHome: auth.role === "owner", manageCalendars: Object.fromEntries(connected.map((person) => [person, homes.calendarAccess(auth, person)])) };
     }
-    return reply.send(response.rawPayload);
+    if (!Object.keys(extra).length) return reply.send(response.rawPayload);
+    return reply.send({ ...data, ...extra });
   }
   app.addHook("onRequest", async (request, reply) => {
     reply.header("Cache-Control", "no-store").header("Referrer-Policy", "no-referrer").header("X-Content-Type-Options", "nosniff");
@@ -163,6 +184,12 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     return { ok: true };
   });
   app.get("/v1/miniapp/households/devices", async (request) => ({ devices: homes.devices(access(request)) }));
+  app.patch("/v1/miniapp/households/devices/:id", async (request) => {
+    const { id } = z.object({ id: idSchema }).parse(request.params);
+    const { label } = z.object({ label: z.string().trim().min(1).max(40) }).parse(request.body);
+    homes.renameDevice(access(request), id, label);
+    return { ok: true };
+  });
   app.delete("/v1/miniapp/households/devices/:id", async (request) => {
     homes.revokeDevice(access(request), z.object({ id: idSchema }).parse(request.params).id); return { ok: true };
   });
@@ -190,7 +217,10 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
   });
   for (const route of [
     { method: "GET", url: "/v1/display/snapshot" }, { method: "POST", url: "/v1/display/now-playing" },
-  ] as const) app.route({ ...route, handler: async (request, reply) => forward(tvAccess(request).homeId, request, reply, request.url, () => tvAccess(request)) });
+  ] as const) app.route({ ...route, handler: async (request, reply) => {
+    const auth = tvAccess(request);
+    return forward(auth.homeId, request, reply, request.url, () => tvAccess(request), auth.deviceId);
+  } });
   // Только перечисленные маршруты достижимы снаружи. Внутренние заголовки клиента никогда не пересылаются.
   for (const route of [
     { method: "GET", url: "/v1/miniapp/state", owner: false },
