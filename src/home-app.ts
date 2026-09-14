@@ -393,11 +393,13 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
         screen: screenIdSchema.optional(),
       })
       .parse(request.body);
-    // Without a screen the phone means the one that is actually playing.
-    const room = body.screen ? screens.at(body.screen) : screens.all().find((item) => item.music.snapshot().nowPlaying) ?? screens.at(body.screen);
+    // Without a screen the phone means whichever one is playing, and hears back about the
+    // house — answering with an empty room would blank the card over a track still playing.
+    const room = body.screen ? screens.at(body.screen) : screens.all().find((item) => item.music.snapshot().nowPlaying) ?? screens.at(undefined);
+    const heard = () => (body.screen ? room.music.snapshot() : houseMusic());
     if (body.action === "toTv") {
       const updated = store.update((state) => setScreen(state, body.screen, { power: "on", powerAt: new Date().toISOString() }));
-      const track = room.music.snapshot();
+      const track = heard();
       return {
         nowPlaying: track.nowPlaying ?? null,
         music: { connected: track.connected },
@@ -405,7 +407,8 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
         ...tvView(updated, body.screen),
       };
     }
-    const result = await room.music.command(body.action, body.volume);
+    await room.music.command(body.action, body.volume);
+    const result = heard();
     return {
       nowPlaying: result.nowPlaying ?? null,
       music: { connected: result.connected },

@@ -134,6 +134,30 @@ test("выключенный экран остаётся выключенным,
   assert.equal(after.power, "off", "настройка живёт в доме, а не в памяти отозвавшихся экранов");
 });
 
+test("«поверх музыки» без выбора экрана не гасит карточку играющего трека", async (t) => {
+  const f = await fixture(t);
+  const tv = await f.pair();
+  await f.snapshot(tv);
+  await f.app.inject({ method: "POST", url: "/v1/display/now-playing", headers: tv, payload: { title: "Пятая симфония" } });
+
+  const answer = (await f.app.inject({ method: "POST", url: "/v1/miniapp/music", headers: f.phone, payload: { action: "toTv" } })).json();
+  assert.equal(answer.nowPlaying?.title, "Пятая симфония", "телефон спросил про дом — про дом и услышал");
+  assert.equal(answer.music.connected, true);
+  assert.equal((await f.snapshot(tv)).power, "on", "экран включается, чтобы показать Dino поверх");
+});
+
+test("«поверх музыки» на выбранном экране отвечает про него же", async (t) => {
+  const f = await fixture(t);
+  const { kitchen, hall, first, second } = await f.twoScreens();
+  await f.app.inject({ method: "POST", url: "/v1/display/now-playing", headers: kitchen, payload: { title: "Пятая симфония" } });
+
+  const here = (await f.app.inject({ method: "POST", url: "/v1/miniapp/music", headers: f.phone, payload: { action: "toTv", screen: first.id } })).json();
+  assert.equal(here.nowPlaying?.title, "Пятая симфония");
+  const there = (await f.app.inject({ method: "POST", url: "/v1/miniapp/music", headers: f.phone, payload: { action: "toTv", screen: second.id } })).json();
+  assert.equal(there.nowPlaying, null, "в зале тихо, и телефон говорит именно это");
+  assert.equal((await f.snapshot(hall)).power, "on");
+});
+
 test("экран можно назвать, и имя видно с телефона", async (t) => {
   const f = await fixture(t);
   await f.pair();
