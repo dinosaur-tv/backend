@@ -158,6 +158,23 @@ test("«поверх музыки» на выбранном экране отв�
   assert.equal((await f.snapshot(hall)).power, "on");
 });
 
+test("телевизор, которому запрещено рисовать поверх, говорит об этом телефону", async (t) => {
+  const f = await fixture(t);
+  const tv = await f.pair();
+  await f.app.inject({ url: "/v1/display/snapshot", headers: { ...tv, "x-dino-overlay": "0" } });
+  assert.equal((await f.state()).screens[0].canOverlay, false);
+
+  await f.app.inject({ url: "/v1/display/snapshot", headers: { ...tv, "x-dino-overlay": "1" } });
+  assert.equal((await f.state()).screens[0].canOverlay, true);
+});
+
+test("экран, который молчит о разрешении, считается умеющим — как было всегда", async (t) => {
+  const f = await fixture(t);
+  const tv = await f.pair();
+  await f.snapshot(tv);
+  assert.equal((await f.state()).screens[0].canOverlay, true);
+});
+
 test("экран можно назвать, и имя видно с телефона", async (t) => {
   const f = await fixture(t);
   await f.pair();

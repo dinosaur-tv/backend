@@ -67,7 +67,7 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
   function named(auth: Access, live: { id: string }[]) {
     const known = new Map(live.map((screen) => [screen.id, screen]));
     return homes.screens(auth).map((screen) => ({
-      online: false, power: "on", nowPlaying: null, music: { connected: false },
+      online: false, power: "on", canOverlay: true, nowPlaying: null, music: { connected: false },
       ...(known.get(screen.id) ?? {}), id: screen.id, label: screen.label, seen: screen.seen ?? null,
     }));
   }
@@ -82,6 +82,7 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     const response = await household(homeId).inject({ method: request.method as "GET" | "POST" | "PATCH", url,
       headers: { "content-type": "application/json", "x-dino-internal": internalToken,
         "x-dino-visible": first(request.headers["x-dino-visible"]) ?? "true",
+        "x-dino-overlay": first(request.headers["x-dino-overlay"]) ?? "true",
         ...(device ? { "x-dino-device": device } : {}),
         ...(url === "/v1/miniapp/calendars/connect" ? { "x-dino-actor": access(request).userId } : {}),
         "x-telegram-bot-api-secret-token": config.TELEGRAM_WEBHOOK_SECRET },
@@ -112,7 +113,7 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     reply.header("Cache-Control", "no-store").header("Referrer-Policy", "no-referrer").header("X-Content-Type-Options", "nosniff");
     if (request.headers.origin === config.MINI_APP_ORIGIN) {
       reply.header("Access-Control-Allow-Origin", config.MINI_APP_ORIGIN).header("Vary", "Origin")
-        .header("Access-Control-Allow-Headers", "content-type, authorization, x-telegram-init-data, x-dino-visible, x-dino-screen-name, x-dino-home-token, x-dino-home-id, x-dino-session")
+        .header("Access-Control-Allow-Headers", "content-type, authorization, x-telegram-init-data, x-dino-visible, x-dino-overlay, x-dino-screen-name, x-dino-home-token, x-dino-home-id, x-dino-session")
         .header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
       if (request.method === "OPTIONS") return reply.code(204).send();
     }

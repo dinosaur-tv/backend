@@ -25,7 +25,7 @@ import {
 } from "./types.js";
 import { musicActions } from "./music.js";
 import { tvApps, tvKeys } from "./tv-command.js";
-import { parseTvVisible } from "./tv-presence.js";
+import { parseTvOverlay, parseTvVisible } from "./tv-presence.js";
 import { power, Screens, screenState, setScreen } from "./screens.js";
 
 setDefaultResultOrder("ipv4first");
@@ -232,7 +232,10 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
     requireDisplayAccess(request.headers.authorization);
     // The gateway knows which television is asking; everything below is that one's own.
     const room = screens.at(firstHeader(request.headers["x-dino-device"]));
-    room.presence.touch(parseTvVisible(firstHeader(request.headers["x-dino-visible"])));
+    room.presence.touch(
+      parseTvVisible(firstHeader(request.headers["x-dino-visible"])),
+      parseTvOverlay(firstHeader(request.headers["x-dino-overlay"])),
+    );
     await livingRoomFeed();
     const state = store.read();
     const note = liveNote(state.display.note);
@@ -513,6 +516,7 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
         id,
         online: Boolean(screens.peek(id)?.presence.online()) && power(state, id) !== "off",
         power: power(state, id),
+        canOverlay: screens.peek(id)?.presence.canOverlay() !== false,
         nowPlaying: track?.nowPlaying ?? null,
         music: { connected: Boolean(track?.connected) },
       };
