@@ -6,8 +6,10 @@ services:
     volumes:
       - ./data:/app/data
     networks:
-      - dino
-      - traefik
+      dino: {}
+      traefik:
+        aliases:
+          - dino-tv-backend
     labels:
       - traefik.enable=true
       - traefik.docker.network=${TRAEFIK_NETWORK:-proxy}
