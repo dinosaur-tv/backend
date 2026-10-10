@@ -20,13 +20,16 @@ import {
   noteExpiresAt,
   parseNoteMinutes,
   type DisplayMood,
+  type DisplayPlace,
   type DisplayTheme,
   type SnapshotEvent,
+  type WeatherSnapshot,
 } from "./types.js";
 import { musicActions } from "./music.js";
 import { tvApps, tvKeys } from "./tv-command.js";
 import { parseTvOverlay, parseTvVisible } from "./tv-presence.js";
 import { power, Screens, screenState, setScreen } from "./screens.js";
+import { fallbackWeather, fetchWeather, placeKey } from "./weather.js";
 
 setDefaultResultOrder("ipv4first");
 
@@ -59,10 +62,16 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
     return `${config.PUBLIC_BASE_URL}/v1/media/background/${homeId}/${id}?expires=${expires}&signature=${signMedia(homeId + "/" + id, expires, config.TOKEN_ENCRYPTION_KEY)}`;
   }
   const feedTtlMs = 45_000;
+  const weatherTtlMs = 20 * 60 * 1000;
   let cachedEvents: SnapshotEvent[] = [];
   let feedUpdatedAt = 0;
   let feedRevision = 0;
   let feedRefresh: Promise<void> | null = null;
+  // Xiaomi and other TV WebViews often cannot reach Open-Meteo directly; the server asks.
+  let cachedWeather: WeatherSnapshot = fallbackWeather();
+  let weatherKey = "";
+  let weatherAt = 0;
+  let weatherRefresh: Promise<void> | null = null;
 
   async function refreshLivingRoomFeed(): Promise<void> {
     if (feedRefresh) return feedRefresh;
@@ -82,6 +91,34 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
   async function livingRoomFeed(): Promise<void> {
     if (!feedUpdatedAt) await refreshLivingRoomFeed();
     else if (Date.now() - feedUpdatedAt > feedTtlMs) void refreshLivingRoomFeed();
+  }
+
+  async function refreshWeather(place: DisplayPlace): Promise<void> {
+    if (weatherRefresh) return weatherRefresh;
+    const key = placeKey(place);
+    weatherRefresh = (async () => {
+      try {
+        cachedWeather = await fetchWeather(place);
+        weatherKey = key;
+        weatherAt = Date.now();
+      } catch (error) {
+        app.log.warn({ err: error }, "weather fetch failed");
+        if (key !== weatherKey) cachedWeather = fallbackWeather(place.name);
+      }
+    })().finally(() => {
+      weatherRefresh = null;
+    });
+    return weatherRefresh;
+  }
+
+  async function ensureWeather(place: DisplayPlace): Promise<WeatherSnapshot> {
+    const key = placeKey(place);
+    const fresh = key === weatherKey && Date.now() - weatherAt < weatherTtlMs;
+    if (!fresh) {
+      if (!weatherAt || key !== weatherKey) await refreshWeather(place);
+      else void refreshWeather(place);
+    }
+    return cachedWeather;
   }
 
   app.addHook("onRequest", async (request, reply) => {
@@ -238,12 +275,14 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
     );
     await livingRoomFeed();
     const state = store.read();
+    const weather = await ensureWeather(state.display.place);
     const note = liveNote(state.display.note);
     const mine = screenState(state, room.id);
     const track = room.music.snapshot();
     return reply.header("Cache-Control", "no-store").send({
       generatedAt: new Date().toISOString(),
       timezone: state.display.place.timezone,
+      weather,
       days: groupByDay(cachedEvents),
       display: {
         ...state.display,
