@@ -95,6 +95,9 @@ test("switches to both architectural wall scenes", () => {
 test("switches to every new seasonal, city and ornament scene", () => {
   for (const [theme, name] of [
     ["autumn-forest", /Осенний лес/],
+    ["aurora", /Северное сияние/],
+    ["dunes", /Дюны/],
+    ["mist-lake", /Туманное озеро/],
     ["petersburg-streets", /Улицы Петербурга/],
     ["oranienbaum", /Ораниенбаум/],
     ["peterhof", /Петергоф/],

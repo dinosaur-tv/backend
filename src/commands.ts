@@ -39,7 +39,7 @@ export function handleTelegramCommand(
   }
   if (command === "/theme") {
     if (!(displayThemes as readonly string[]).includes(argument) && argument !== "home") {
-      return { text: "Сцены: gallery, home-day, home-evening, palace, oak-study, palace-study, night, play, forest, autumn-forest, mountains, sea, space, petersburg, petersburg-streets, oranienbaum, peterhof, rome, florence, venice, italy-sunset, rus, gzhel, soviet-carpet, byzantium, india или italy. Например: /theme peterhof." };
+      return { text: `Сцены: ${displayThemes.join(", ")}. Например: /theme aurora.` };
     }
     if (argument === "night" || argument === "play" || argument === "home") {
       update((state) => { state.display.mood = argument as DisplayMood; });
@@ -59,6 +59,9 @@ export function handleTelegramCommand(
       mountains: "Горы",
       sea: "Море",
       space: "Космос",
+      aurora: "Северное сияние",
+      dunes: "Дюны",
+      "mist-lake": "Туманное озеро",
       petersburg: "Петербург",
       "petersburg-streets": "Улицы Петербурга",
       oranienbaum: "Ораниенбаум",

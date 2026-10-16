@@ -22,6 +22,7 @@ export type DisplayMode = (typeof displayModes)[number];
 
 export const displayThemes = [
   "gallery", "home-day", "home-evening", "night", "play", "forest", "autumn-forest", "mountains", "sea", "space",
+  "aurora", "dunes", "mist-lake",
   "petersburg", "petersburg-streets", "oranienbaum", "peterhof", "rome", "florence", "venice", "italy-sunset",
   "palace", "oak-study", "palace-study", "rus", "gzhel", "soviet-carpet", "byzantium", "india", "italy",
 ] as const;
