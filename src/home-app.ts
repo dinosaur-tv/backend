@@ -16,6 +16,8 @@ import {
   liveNote,
   normalizePlace,
   normalizeRotation,
+  normalizeArt,
+  artSlideMinutes,
   noteDurationsMin,
   noteExpiresAt,
   parseNoteMinutes,
@@ -379,6 +381,14 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
             week: z.number().optional(),
           })
           .optional(),
+        art: z
+          .object({
+            fullscreen: z.boolean().optional(),
+            slideshow: z.boolean().optional(),
+            minutes: z.number().int().refine((value) => (artSlideMinutes as readonly number[]).includes(value)).optional(),
+            collection: z.string().trim().max(40).optional(),
+          })
+          .optional(),
       })
       .parse(request.body);
     if (body.clearNote && body.note) throw Object.assign(new Error("Choose note or clearNote"), { statusCode: 400 });
@@ -412,6 +422,7 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
       if (body.rotation) {
         state.display.rotation = normalizeRotation({ ...state.display.rotation, ...body.rotation });
       }
+      if (body.art) state.display.art = normalizeArt({ ...state.display.art, ...body.art });
     });
     return {
       display: {

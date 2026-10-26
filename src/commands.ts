@@ -65,6 +65,13 @@ export function handleTelegramCommand(
       sunroom: "Свет на стене",
       "rain-glass": "Дождь на стекле",
       "liquid-glass": "Жидкое стекло",
+      fireplace: "Камин",
+      campfire: "Костёр",
+      "window-streams": "Струи по стеклу",
+      snowfall: "Снегопад",
+      "starry-sky": "Звёздное небо",
+      surf: "Прибой на закате",
+      "forest-stream": "Лесной ручей",
       "art-levitan": "Исаак Левитан · Над вечным покоем",
       "art-shishkin": "Иван Шишкин · Рожь",
       "art-aivazovsky": "Иван Айвазовский · Девятый вал",
@@ -90,7 +97,7 @@ export function handleTelegramCommand(
       "soviet-carpet": "Советский ковёр",
       byzantium: "Византия",
       india: "Индия",
-      italy: "Итальянский узор",
+      italy: "Неаполитанская майолика",
     };
     return { text: `Сцена «${names[argument as DisplayTheme] ?? argument}» уже оживает на телевизоре.` };
   }
