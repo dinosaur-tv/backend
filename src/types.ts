@@ -18,16 +18,34 @@ export function freeCalendarColor(taken: Iterable<string>): string {
 }
 
 export const displayModes = ["TODAY", "TOMORROW", "WEEK"] as const;
+
+/** Paintings added after the first nine; the web app's artworks.js holds their titles. */
+export const artworkIds = [
+  "art-kuindzhi-dnieper", "art-shishkin-morning", "art-levitan-autumn", "art-polenov-courtyard", "art-savrasov-rooks",
+  "art-monet-waterloo", "art-monet-charing-cross", "art-monet-parliament", "art-monet-impression", "art-sisley-flood",
+  "art-caillebotte-rain", "art-degas-dancers",
+  "art-vangogh-starry-night", "art-vangogh-rhone", "art-vangogh-cypresses", "art-vangogh-almond", "art-vangogh-cafe", "art-cezanne-victoire",
+  "art-seurat-jatte",
+  "art-matisse-dance", "art-matisse-red-room", "art-matisse-boats", "art-matisse-goldfish", "art-klimt-birch",
+  "art-klimt-kiss", "art-mucha-seasons",
+  "art-kandinsky-composition-7", "art-kandinsky-composition-8", "art-kandinsky-yellow-red-blue", "art-kandinsky-circles",
+  "art-malevich-cavalry", "art-malevich-suprematism", "art-malevich-square", "art-klee-castle",
+  "art-hokusai-wave", "art-hokusai-red-fuji", "art-hiroshige-shower", "art-hiroshige-plum",
+  "art-turner-rain", "art-turner-temeraire", "art-friedrich-moon", "art-whistler-nocturne",
+  "art-bruegel-hunters", "art-vermeer-delft", "art-vermeer-street",
+] as const;
 export type DisplayMode = (typeof displayModes)[number];
 
 export const displayThemes = [
   "gallery", "home-day", "home-evening", "night", "play", "forest", "autumn-forest", "mountains", "sea", "space",
   "aurora", "dunes", "mist-lake",
   "sunroom", "rain-glass", "liquid-glass",
+  "fireplace", "campfire", "window-streams", "snowfall", "starry-sky", "surf", "forest-stream",
   "petersburg", "petersburg-streets", "oranienbaum", "peterhof", "rome", "florence", "venice", "italy-sunset",
   "palace", "oak-study", "palace-study", "rus", "gzhel", "soviet-carpet", "byzantium", "india", "italy",
   "art-levitan", "art-shishkin", "art-aivazovsky", "art-monet", "art-renoir", "art-pissarro",
   "art-kandinsky", "art-malevich", "art-mondrian",
+  ...artworkIds,
 ] as const;
 export type DisplayTheme = (typeof displayThemes)[number];
 
@@ -158,6 +176,29 @@ export function normalizeRotation(value?: Partial<DisplayRotation> & { now?: num
   };
 }
 
+/**
+ * How paintings are shown. `fullscreen` leaves only the clock beside the picture; the
+ * slideshow walks the chosen collection (empty: every painting) every `minutes`.
+ */
+export interface DisplayArt {
+  fullscreen: boolean;
+  slideshow: boolean;
+  minutes: number;
+  collection: string;
+}
+
+export const artSlideMinutes = [1, 3, 5, 10, 15, 30, 60] as const;
+
+export function normalizeArt(value?: Partial<DisplayArt>): DisplayArt {
+  const minutes = Number(value?.minutes);
+  return {
+    fullscreen: value?.fullscreen === true,
+    slideshow: value?.slideshow === true,
+    minutes: (artSlideMinutes as readonly number[]).includes(minutes) ? minutes : 5,
+    collection: typeof value?.collection === "string" ? value.collection.trim().slice(0, 40) : "",
+  };
+}
+
 export interface DisplaySettings {
   mode: DisplayMode;
   theme: DisplayTheme;
@@ -169,6 +210,7 @@ export interface DisplaySettings {
   background?: DisplayBackground;
   rotation: DisplayRotation;
   place: DisplayPlace;
+  art?: DisplayArt;
 }
 
 /**

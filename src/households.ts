@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Config } from "./config.js";
 import { emptyState, EncryptedStore, type StateStore } from "./store.js";
-import { defaultPlace, normalizeCalendars, normalizePlace, normalizeRotation, type StoredState } from "./types.js";
+import { defaultPlace, normalizeArt, normalizeCalendars, normalizePlace, normalizeRotation, type StoredState } from "./types.js";
 
 export const fail = (statusCode: number, message: string): never => { throw Object.assign(new Error(message), { statusCode }); };
 /** «Телевизор», «Телефон 3» — a name nobody has chosen, so a screen may replace it with its own. */
@@ -80,6 +80,7 @@ export class Households {
     // every reader would have to guard for it. Homes predate `place`, for one.
     state.display.place = normalizePlace(state.display.place) ?? defaultPlace();
     state.display.rotation = normalizeRotation(state.display.rotation);
+    state.display.art = normalizeArt(state.display.art);
     normalizeCalendars(state, this.isLegacy(id)
       ? { misha: this.config.PERSON_1_NAME, natasha: this.config.PERSON_2_NAME }
       : {});
