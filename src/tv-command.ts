@@ -29,6 +29,7 @@ export type TvCommand =
 
 export class TvDesk {
   private readonly commands: TvCommand[] = [];
+  private readonly waiters = new Set<() => void>();
   private seq = 0;
 
   constructor(
@@ -67,9 +68,33 @@ export class TvDesk {
     return this.push({ action: "click", button, at: this.nextAt() });
   }
 
+  /** What came after the last command a screen has played, oldest first. */
+  after(at: string): TvCommand[] {
+    return this.commands.filter((command) => command.at > at);
+  }
+
+  /**
+   * Holds a screen's request until something new is pressed, or until `ms` passes. A
+   * cursor dragged on the phone reaches the screen as it moves, not at the next poll.
+   */
+  async wait(at: string, ms: number): Promise<TvCommand[]> {
+    if (this.after(at).length) return this.after(at);
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.waiters.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      this.waiters.add(done);
+    });
+    return this.after(at);
+  }
+
   private push(command: TvCommand): TvCommand {
     this.commands.push(command);
     while (this.commands.length > this.max) this.commands.shift();
+    for (const wake of [...this.waiters]) wake();
     return command;
   }
 

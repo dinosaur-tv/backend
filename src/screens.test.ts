@@ -233,3 +233,16 @@ test("телефон печатает, двигает курсор и откры
   assert.equal((await send({ action: "text", text: "" })).statusCode, 400);
   assert.equal((await send({ action: "launch", app: "steam" })).statusCode, 400);
 });
+
+test("компьютер под телевизором ждёт команду и получает её сразу", async (t) => {
+  const f = await fixture(t);
+  const tv = await f.pair();
+  await f.snapshot(tv);
+  // Nothing pressed yet: a short wait comes back empty; a long one is woken by the press.
+  assert.deepEqual((await f.app.inject({ url: "/v1/display/commands?after=&wait=10", headers: tv })).json().commands, []);
+  const held = f.app.inject({ url: "/v1/display/commands?after=&wait=5000", headers: tv });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await f.app.inject({ method: "POST", url: "/v1/miniapp/tv", headers: f.phone, payload: { action: "pointer", dx: 3, dy: 4 } });
+  const answer = (await held).json();
+  assert.deepEqual(answer.commands.map((item: { action: string; dx: number }) => [item.action, item.dx]), [["pointer", 3]]);
+});

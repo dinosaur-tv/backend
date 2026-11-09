@@ -45,3 +45,16 @@ test("text, pointer, scroll and click reach the screen; long text and wild swipe
   assert.deepEqual(desk.scroll(-3), { action: "scroll", dy: -3, at: "1970-01-01T00:00:01.000Z#0003" });
   assert.deepEqual(desk.click("right"), { action: "click", button: "right", at: "1970-01-01T00:00:01.000Z#0004" });
 });
+
+test("a waiting screen is answered the moment something is pressed, and only with what is new", async () => {
+  const desk = new TvDesk(() => 1_000);
+  const first = desk.key("up");
+  const waiting = desk.wait(first.at, 5_000);
+  const started = Date.now();
+  setTimeout(() => desk.pointer(5, 0), 20);
+  const commands = await waiting;
+  assert.ok(Date.now() - started < 1_000, "answered on the press, not at the timeout");
+  assert.deepEqual(commands.map((command) => command.action), ["pointer"]);
+  assert.deepEqual(await desk.wait("", 10), desk.snapshot().commands, "nothing seen yet: everything is new");
+  assert.deepEqual(await desk.wait(desk.snapshot().commands.at(-1)!.at, 10), [], "timeout with nothing new");
+});

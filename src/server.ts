@@ -227,6 +227,7 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
   });
   for (const route of [
     { method: "GET", url: "/v1/display/snapshot" }, { method: "POST", url: "/v1/display/now-playing" },
+    { method: "GET", url: "/v1/display/commands" },
   ] as const) app.route({ ...route, handler: async (request, reply) => {
     const auth = tvAccess(request);
     homes.sawDevice(auth.deviceId);

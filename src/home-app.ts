@@ -267,6 +267,17 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
       );
   });
 
+  // A computer screen's remote: answers as soon as the phone presses something, or after 25 s.
+  app.get("/v1/display/commands", async (request, reply) => {
+    requireDisplayAccess(request.headers.authorization);
+    if (!config.TV_REMOTE_ENABLED) return reply.header("Cache-Control", "no-store").send({ commands: [] });
+    const room = screens.at(firstHeader(request.headers["x-dino-device"]));
+    room.presence.touch(true, true);
+    const query = z.object({ after: z.string().max(64).default(""), wait: z.coerce.number().int().min(0).max(25_000).default(25_000) }).parse(request.query);
+    const commands = await room.tv.wait(query.after, query.wait);
+    return reply.header("Cache-Control", "no-store").send({ commands });
+  });
+
   app.get("/v1/display/snapshot", async (request, reply) => {
     requireDisplayAccess(request.headers.authorization);
     // The gateway knows which television is asking; everything below is that one's own.
