@@ -16,6 +16,15 @@ const idSchema = z.string().uuid();
 const personSchema = z.string().regex(/^[a-z0-9]{1,32}$/);
 const codeSchema = z.object({ code: z.string().regex(/^(?:\d{6}|\d{10})$/) });
 const first = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] : value;
+/**
+ * Screens percent-encode their name: fetch() refuses header values outside Latin-1, so
+ * «Dino TV на Кухне» could not travel as is. Older screens send plain Latin text such as
+ * «LG webOS», which decodes to itself; anything that does not decode is kept as sent.
+ */
+const screenNameFromHeader = (value: string | undefined) => {
+  if (!value) return value;
+  try { return decodeURIComponent(value); } catch { return value; }
+};
 
 /** Публичный шлюз: аутентификация, членство и назначение дома до доступа к любому сервису. */
 export function createApp(config: Config, dataDir = join(process.cwd(), "data")) {
@@ -222,7 +231,7 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     const auth = tvAccess(request);
     homes.sawDevice(auth.deviceId);
     // A screen that knows its own make offers it; a name somebody typed always wins.
-    const described = first(request.headers["x-dino-screen-name"]);
+    const described = screenNameFromHeader(first(request.headers["x-dino-screen-name"]));
     if (described) homes.describeDevice(auth.deviceId, described);
     return forward(auth.homeId, request, reply, request.url, () => tvAccess(request), auth.deviceId);
   } });
