@@ -216,3 +216,20 @@ test("имя, которое не раскодировать, остаётся �
   await f.app.inject({ url: "/v1/display/snapshot", headers: { ...tv, "x-dino-screen-name": "100% TV" } });
   assert.deepEqual((await f.state()).screens.map((item: { label: string }) => item.label), ["100% TV"]);
 });
+
+test("телефон печатает, двигает курсор и открывает приложения компьютера под телевизором", async (t) => {
+  const f = await fixture(t);
+  const tv = await f.pair();
+  await f.snapshot(tv);
+  const send = (payload: object) => f.app.inject({ method: "POST", url: "/v1/miniapp/tv", headers: f.phone, payload });
+  for (const payload of [
+    { action: "text", text: "Брат 2" }, { action: "pointer", dx: 40, dy: -12 }, { action: "scroll", dy: 3 },
+    { action: "click" }, { action: "key", key: "backspace" }, { action: "launch", app: "rutube" },
+  ]) assert.equal((await send(payload)).statusCode, 200, JSON.stringify(payload));
+  const view = await f.snapshot(tv);
+  assert.deepEqual(view.tvCommands.map((item: { action: string }) => item.action), ["text", "pointer", "scroll", "click", "key", "launch"]);
+  assert.equal(view.tvCommands[3].button, "left");
+  assert.equal(view.power, "off", "открытое приложение закрывает экран Dino, как Кинопоиск");
+  assert.equal((await send({ action: "text", text: "" })).statusCode, 400);
+  assert.equal((await send({ action: "launch", app: "steam" })).statusCode, 400);
+});

@@ -37,3 +37,11 @@ test("keeps a FIFO of pad keys so rapid taps are not lost", () => {
     ],
   );
 });
+
+test("text, pointer, scroll and click reach the screen; long text and wild swipes are clipped", () => {
+  const desk = new TvDesk(() => 1_000);
+  assert.deepEqual(desk.text("x".repeat(500)), { action: "text", text: "x".repeat(200), at: "1970-01-01T00:00:01.000Z#0001" });
+  assert.deepEqual(desk.pointer(12.6, -99_999), { action: "pointer", dx: 13, dy: -2000, at: "1970-01-01T00:00:01.000Z#0002" });
+  assert.deepEqual(desk.scroll(-3), { action: "scroll", dy: -3, at: "1970-01-01T00:00:01.000Z#0003" });
+  assert.deepEqual(desk.click("right"), { action: "click", button: "right", at: "1970-01-01T00:00:01.000Z#0004" });
+});

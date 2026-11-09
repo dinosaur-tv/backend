@@ -28,7 +28,7 @@ import {
   type WeatherSnapshot,
 } from "./types.js";
 import { musicActions } from "./music.js";
-import { tvApps, tvKeys } from "./tv-command.js";
+import { TV_TEXT_MAX, tvApps, tvClicks, tvKeys } from "./tv-command.js";
 import { parseTvOverlay, parseTvVisible } from "./tv-presence.js";
 import { power, Screens, screenState, setScreen } from "./screens.js";
 import { fallbackWeather, fetchWeather, placeKey } from "./weather.js";
@@ -477,15 +477,29 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
       .union([
         z.object({ action: z.literal("launch"), app: z.enum(tvApps), screen: screenIdSchema.optional() }),
         z.object({ action: z.literal("key"), key: z.enum(tvKeys), screen: screenIdSchema.optional() }),
+        z.object({ action: z.literal("text"), text: z.string().min(1).max(TV_TEXT_MAX), screen: screenIdSchema.optional() }),
+        z.object({ action: z.literal("pointer"), dx: z.number().finite(), dy: z.number().finite(), screen: screenIdSchema.optional() }),
+        z.object({ action: z.literal("scroll"), dy: z.number().finite(), screen: screenIdSchema.optional() }),
+        z.object({ action: z.literal("click"), button: z.enum(tvClicks).default("left"), screen: screenIdSchema.optional() }),
       ])
       .parse(request.body);
     // A named screen alone; an unnamed one is an older phone that means the whole house.
     const rooms = screens.addressed(body.screen);
-    const commands = rooms.map((room) => (body.action === "launch" ? room.tv.launch(body.app) : room.tv.key(body.key)));
+    const commands = rooms.map((room) => {
+      switch (body.action) {
+        case "launch": return room.tv.launch(body.app);
+        case "key": return room.tv.key(body.key);
+        case "text": return room.tv.text(body.text);
+        case "pointer": return room.tv.pointer(body.dx, body.dy);
+        case "scroll": return room.tv.scroll(body.dy);
+        case "click": return room.tv.click(body.button);
+      }
+    });
     let powerState = store.read();
     if (body.action === "launch") {
-      const wanted = body.app === "kinopoisk" ? "off" : body.app === "dino" ? "on" : undefined;
-      if (wanted) powerState = store.update((state) => setScreen(state, body.screen, { power: wanted, powerAt: new Date().toISOString() }));
+      // Any other app covers the Dino screen, the way Kinopoisk always did.
+      const wanted = body.app === "dino" ? "on" : "off";
+      powerState = store.update((state) => setScreen(state, body.screen, { power: wanted, powerAt: new Date().toISOString() }));
     }
     return {
       ok: true,
