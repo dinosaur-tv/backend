@@ -201,3 +201,18 @@ test("чужой экран не переименовать из другого 
   const refused = await f.app.inject({ method: "PATCH", url: "/v1/miniapp/households/devices/" + screen.id, headers: stranger, payload: { label: "Мой" } });
   assert.equal(refused.statusCode, 404);
 });
+
+test("экран с русским именем называет себя, хотя имя пришло закодированным", async (t) => {
+  const f = await fixture(t);
+  const desk = await f.pair(), tv = await f.pair();
+  await f.app.inject({ url: "/v1/display/snapshot", headers: { ...desk, "x-dino-screen-name": encodeURIComponent("Dino TV на Кабинет") } });
+  await f.app.inject({ url: "/v1/display/snapshot", headers: { ...tv, "x-dino-screen-name": "LG webOS" } });
+  assert.deepEqual((await f.state()).screens.map((item: { label: string }) => item.label), ["Dino TV на Кабинет", "LG webOS"]);
+});
+
+test("имя, которое не раскодировать, остаётся как прислано", async (t) => {
+  const f = await fixture(t);
+  const tv = await f.pair();
+  await f.app.inject({ url: "/v1/display/snapshot", headers: { ...tv, "x-dino-screen-name": "100% TV" } });
+  assert.deepEqual((await f.state()).screens.map((item: { label: string }) => item.label), ["100% TV"]);
+});
