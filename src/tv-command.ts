@@ -91,6 +91,11 @@ export class TvDesk {
     return this.after(at);
   }
 
+  /** Wakes waiting screens without a new press: something else for them, such as music. */
+  nudge() {
+    for (const wake of [...this.waiters]) wake();
+  }
+
   private push(command: TvCommand): TvCommand {
     this.commands.push(command);
     while (this.commands.length > this.max) this.commands.shift();

@@ -275,7 +275,8 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
     room.presence.touch(true, true);
     const query = z.object({ after: z.string().max(64).default(""), wait: z.coerce.number().int().min(0).max(25_000).default(25_000) }).parse(request.query);
     const commands = await room.tv.wait(query.after, query.wait);
-    return reply.header("Cache-Control", "no-store").send({ commands });
+    // The music card's last press rides along, so pause and next reach the player at once too.
+    return reply.header("Cache-Control", "no-store").send({ commands, musicCommand: room.music.snapshot().command ?? null });
   });
 
   app.get("/v1/display/snapshot", async (request, reply) => {
@@ -461,6 +462,7 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
     // house — answering with an empty room would blank the card over a track still playing.
     const room = body.screen ? screens.at(body.screen) : screens.all().find((item) => item.music.snapshot().nowPlaying) ?? screens.at(undefined);
     const heard = () => (body.screen ? room.music.snapshot() : houseMusic());
+    const wake = () => room.tv.nudge();
     if (body.action === "toTv") {
       const updated = store.update((state) => setScreen(state, body.screen, { power: "on", powerAt: new Date().toISOString() }));
       const track = heard();
@@ -472,6 +474,7 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
       };
     }
     await room.music.command(body.action, body.volume);
+    wake();
     const result = heard();
     return {
       nowPlaying: result.nowPlaying ?? null,

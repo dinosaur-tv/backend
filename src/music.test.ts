@@ -71,3 +71,24 @@ test("asks to start Kinopoisk when nothing is playing on the television", async 
   const desk = new MusicDesk();
   await assert.rejects(() => desk.command("toggle"), /Кинопоиске/);
 });
+
+test("a report read before a press does not undo the press, a later one is believed", async () => {
+  let now = 1_000;
+  const desk = new MusicDesk(undefined, () => now);
+  const track = { title: "Застрахуй", artist: "Ноггано", isPlaying: true, volumePercent: 60 };
+  desk.hearFromTv(track);
+  await desk.command("pause");
+  assert.equal(desk.snapshot().nowPlaying?.isPlaying, false);
+  now = 1_800;
+  desk.hearFromTv(track); // read just before the player got the press
+  assert.equal(desk.snapshot().nowPlaying?.isPlaying, false, "the phone's pause stands");
+  now = 5_000;
+  desk.hearFromTv(track); // long after: the screen really is playing again
+  assert.equal(desk.snapshot().nowPlaying?.isPlaying, true);
+  await desk.command("volume", 20);
+  now = 5_500;
+  desk.hearFromTv(track);
+  assert.equal(desk.snapshot().nowPlaying?.volumePercent, 20);
+  desk.hearFromTv({ ...track, title: "Другой трек" });
+  assert.equal(desk.snapshot().nowPlaying?.title, "Другой трек", "a new track is always shown");
+});
