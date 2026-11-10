@@ -199,6 +199,24 @@ export function normalizeArt(value?: Partial<DisplayArt>): DisplayArt {
   };
 }
 
+/** At night the screen goes dark so the television does not burn in; the computer keeps running. */
+export interface DisplaySleep {
+  enabled: boolean;
+  /** Local time, "HH:MM". A window may cross midnight: 01:00–08:00 or 23:30–07:00. */
+  from: string;
+  to: string;
+}
+
+const clockTime = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function normalizeSleep(value?: Partial<DisplaySleep>): DisplaySleep {
+  return {
+    enabled: value?.enabled === true,
+    from: typeof value?.from === "string" && clockTime.test(value.from) ? value.from : "01:00",
+    to: typeof value?.to === "string" && clockTime.test(value.to) ? value.to : "08:00",
+  };
+}
+
 export interface DisplaySettings {
   mode: DisplayMode;
   theme: DisplayTheme;
@@ -211,6 +229,7 @@ export interface DisplaySettings {
   rotation: DisplayRotation;
   place: DisplayPlace;
   art?: DisplayArt;
+  sleep?: DisplaySleep;
 }
 
 /**

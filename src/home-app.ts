@@ -16,7 +16,7 @@ import {
   liveNote,
   normalizePlace,
   normalizeRotation,
-  normalizeArt,
+  normalizeArt, normalizeSleep,
   artSlideMinutes,
   noteDurationsMin,
   noteExpiresAt,
@@ -393,6 +393,13 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
             week: z.number().optional(),
           })
           .optional(),
+        sleep: z
+          .object({
+            enabled: z.boolean().optional(),
+            from: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+            to: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+          })
+          .optional(),
         art: z
           .object({
             fullscreen: z.boolean().optional(),
@@ -435,6 +442,7 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
         state.display.rotation = normalizeRotation({ ...state.display.rotation, ...body.rotation });
       }
       if (body.art) state.display.art = normalizeArt({ ...state.display.art, ...body.art });
+      if (body.sleep) state.display.sleep = normalizeSleep({ ...state.display.sleep, ...body.sleep });
     });
     return {
       display: {

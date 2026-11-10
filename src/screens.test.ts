@@ -246,3 +246,13 @@ test("компьютер под телевизором ждёт команду �
   const answer = (await held).json();
   assert.deepEqual(answer.commands.map((item: { action: string; dx: number }) => [item.action, item.dx]), [["pointer", 3]]);
 });
+
+test("ночное окно сохраняется, неверное время не принимается, экран его видит", async (t) => {
+  const f = await fixture(t);
+  const tv = await f.pair();
+  const patch = (sleep: object) => f.app.inject({ method: "PATCH", url: "/v1/miniapp/display", headers: f.phone, payload: { sleep } });
+  assert.deepEqual((await f.snapshot(tv)).display.sleep, { enabled: false, from: "01:00", to: "08:00" });
+  assert.equal((await patch({ enabled: true, from: "23:30" })).statusCode, 200);
+  assert.deepEqual((await f.snapshot(tv)).display.sleep, { enabled: true, from: "23:30", to: "08:00" });
+  assert.equal((await patch({ to: "25:00" })).statusCode, 400);
+});
