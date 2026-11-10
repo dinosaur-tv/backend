@@ -256,14 +256,3 @@ test("ночное окно сохраняется, неверное время 
   assert.deepEqual((await f.snapshot(tv)).display.sleep, { enabled: true, from: "23:30", to: "08:00" });
   assert.equal((await patch({ to: "25:00" })).statusCode, 400);
 });
-
-test("«Джарвис, включи музыку» с телефона доходит до экрана командами", async (t) => {
-  const f = await fixture(t);
-  const tv = await f.pair();
-  await f.snapshot(tv);
-  const reply = await f.app.inject({ method: "POST", url: "/v1/miniapp/assistant", headers: f.phone, payload: { text: "Джарвис, включи музыку" } });
-  assert.equal(reply.statusCode, 200);
-  assert.equal(reply.json().reply, "Включаю музыку.");
-  const commands = (await f.app.inject({ url: "/v1/display/commands?after=&wait=0", headers: tv })).json().commands;
-  assert.deepEqual(commands.map((item: { action: string; app?: string; key?: string }) => item.app ?? item.key), ["yandex_music", "music_start"]);
-});

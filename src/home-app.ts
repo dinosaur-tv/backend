@@ -28,8 +28,7 @@ import {
   type WeatherSnapshot,
 } from "./types.js";
 import { musicActions } from "./music.js";
-import { TV_TEXT_MAX, tvApps, tvClicks, tvKeys, type TvKey } from "./tv-command.js";
-import { answer, type AssistantAction } from "./assistant.js";
+import { TV_TEXT_MAX, tvApps, tvClicks, tvKeys } from "./tv-command.js";
 import { parseTvOverlay, parseTvVisible } from "./tv-presence.js";
 import { power, Screens, screenState, setScreen } from "./screens.js";
 import { fallbackWeather, fetchWeather, placeKey } from "./weather.js";
@@ -536,49 +535,6 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
       screens: screenView(powerState),
       ...tvView(powerState, body.screen),
     };
-  });
-
-  /** Carries out what the assistant decided, on one screen or (from a phone) on all. */
-  function runAssistant(actions: AssistantAction[], screen?: string) {
-    const rooms = screens.addressed(screen);
-    for (const action of actions) {
-      for (const room of rooms) {
-        switch (action.kind) {
-          case "launch": room.tv.launch(action.app); break;
-          case "music": room.tv.key(`music_${action.action}` as TvKey); break;
-          case "volume": room.tv.key(action.direction === "up" ? "volume_up" : "volume_down"); break;
-          case "volume_set": void room.music.command("volume", action.level).catch(() => {}); room.tv.nudge(); break;
-          case "screen": room.tv.key(action.power === "off" ? "display_off" : "display_on"); break;
-          case "text": room.tv.text(action.text); break;
-        }
-      }
-      if (action.kind === "launch") {
-        store.update((state) => setScreen(state, screen, { power: action.app === "dino" ? "on" : "off", powerAt: new Date().toISOString() }));
-      }
-    }
-  }
-
-  const assistantConfig = { apiKey: config.ROUTERAI_API_KEY, model: config.ROUTERAI_MODEL, baseUrl: config.ROUTERAI_BASE_URL };
-  const phraseSchema = z.object({ text: z.string().trim().min(1).max(500), screen: screenIdSchema.optional() });
-
-  // «Джарвис» heard on a screen: the action happens there, the answer is spoken there.
-  app.post("/v1/display/assistant", async (request) => {
-    requireDisplayAccess(request.headers.authorization);
-    const room = screens.at(firstHeader(request.headers["x-dino-device"]));
-    const body = phraseSchema.parse(request.body);
-    const result = await answer(body.text, assistantConfig);
-    runAssistant(result.actions, room.id);
-    app.log.info({ assistant: { source: result.source, actions: result.actions.map((item) => item.kind) } }, "assistant answered");
-    return result;
-  });
-
-  // The same assistant typed or dictated on the phone.
-  app.post("/v1/miniapp/assistant", async (request) => {
-    requireMiniAppUser(request);
-    const body = phraseSchema.parse(request.body);
-    const result = await answer(body.text, assistantConfig);
-    runAssistant(result.actions, body.screen);
-    return result;
   });
 
   app.post("/v1/miniapp/background", async (request) => {

@@ -9,7 +9,7 @@ export const tvKeys = [
   "volume_up", "volume_down", "mute", "play_pause",
   // Keys a phone keyboard cannot send as text.
   "backspace", "enter", "tab", "space",
-  // What the assistant asks of a computer: music it can start and the display it can darken.
+  // What a computer can do beyond keys: music it can start and the display it can darken.
   "music_start", "music_play", "music_pause", "music_next", "music_previous",
   "display_off", "display_on",
 ] as const;
