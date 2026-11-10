@@ -509,6 +509,12 @@ export function createHomeApp(config: Config, store: StateStore, dataDir: string
         case "click": return room.tv.click(body.button);
       }
     });
+    // Cursor travel, scroll, clicks and typing arrive many times a second and the phone
+    // reads nothing back: answering with the whole house each time made the old Mac spend
+    // most of its time on the answer, and the cursor lagged behind the finger.
+    if (body.action === "pointer" || body.action === "scroll" || body.action === "text" || body.action === "click") {
+      return { ok: true };
+    }
     let powerState = store.read();
     if (body.action === "launch") {
       // Any other app covers the Dino screen, the way Kinopoisk always did.

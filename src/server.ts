@@ -256,7 +256,13 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
       person = z.object({ person: personSchema.optional() }).parse(request.method === "GET" || request.method === "PATCH" ? request.params : request.body).person;
       if (person && !homes.calendarAccess(auth, person)) fail(403, "Этот календарь подключил другой участник");
     }
-    if (request.method !== "GET" && !attempts.allow("write:" + auth.homeId, 120, 60_000)) fail(429, "Слишком много команд для этого дома");
+    // A dragged cursor alone is a thousand commands a minute; it gets a budget of its own
+    // instead of crowding out the ordinary 120 writes a minute.
+    const action = request.url === "/v1/miniapp/tv" ? (request.body as { action?: unknown } | undefined)?.action : undefined;
+    const steady = action === "pointer" || action === "scroll" || action === "text" || action === "click";
+    if (request.method !== "GET" && !(steady
+      ? attempts.allow("pointer:" + auth.homeId, 3_000, 60_000)
+      : attempts.allow("write:" + auth.homeId, 120, 60_000))) fail(429, "Слишком много команд для этого дома");
     return forward(auth.homeId, request, reply, request.url, () => { const current = access(request); if (person && !homes.calendarAccess(current, person)) fail(403, "Доступ к календарю изменился"); });
   } });
   app.get("/v1/media/background/:homeId/:id", async (request, reply) => {
