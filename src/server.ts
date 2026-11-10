@@ -228,6 +228,7 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
   for (const route of [
     { method: "GET", url: "/v1/display/snapshot" }, { method: "POST", url: "/v1/display/now-playing" },
     { method: "GET", url: "/v1/display/commands" },
+    { method: "POST", url: "/v1/display/assistant" },
   ] as const) app.route({ ...route, handler: async (request, reply) => {
     const auth = tvAccess(request);
     homes.sawDevice(auth.deviceId);
@@ -242,6 +243,7 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
     { method: "PATCH", url: "/v1/miniapp/display", owner: false },
     { method: "POST", url: "/v1/miniapp/music", owner: false },
     { method: "POST", url: "/v1/miniapp/tv", owner: false },
+    { method: "POST", url: "/v1/miniapp/assistant", owner: false },
     { method: "POST", url: "/v1/miniapp/background", owner: false },
     { method: "POST", url: "/v1/miniapp/calendars/connect", owner: true },
     { method: "GET", url: "/v1/miniapp/calendars/:person", owner: true },

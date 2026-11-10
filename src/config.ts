@@ -19,6 +19,11 @@ const configSchema = z.object({
   MINI_APP_ORIGIN: z.string().url(),
   TELEGRAM_WEB_APP_URL: z.string().url(),
   TV_REMOTE_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  // «Джарвис»: an OpenAI-compatible endpoint. Without a key the assistant still knows the
+  // everyday commands and says plainly that it cannot answer the rest.
+  ROUTERAI_API_KEY: z.string().optional().transform((value) => value?.trim() || undefined),
+  ROUTERAI_MODEL: z.string().trim().min(1).default("openai/gpt-4o-mini"),
+  ROUTERAI_BASE_URL: z.string().url().default("https://routerai.ru/api/v1"),
   TRUST_PROXY: z.string().default(""),
   PERSON_1_NAME: z.string().trim().min(1).max(60).default("Участник 1"),
   PERSON_2_NAME: z.string().trim().min(1).max(60).default("Участник 2"),
