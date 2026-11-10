@@ -92,3 +92,12 @@ test("a report read before a press does not undo the press, a later one is belie
   desk.hearFromTv({ ...track, title: "Другой трек" });
   assert.equal(desk.snapshot().nowPlaying?.title, "Другой трек", "a new track is always shown");
 });
+
+test("volume goes to the screen even with nothing playing", async () => {
+  const desk = new MusicDesk(undefined, () => 1_000);
+  const result = await desk.command("volume", 35);
+  assert.equal(result.nowPlaying, undefined);
+  assert.equal(result.command?.action, "volume");
+  assert.equal(result.command?.volume, 35);
+  await assert.rejects(desk.command("next"));
+});

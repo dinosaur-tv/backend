@@ -89,6 +89,11 @@ export class MusicDesk {
     if (action === "toTv") {
       return this.snapshot();
     }
+    // With nothing playing, volume is the computer's own: it goes through all the same.
+    if (!this.live() && action === "volume") {
+      this.pending = { action, volume: volumePercent(volume), at: new Date(this.now()).toISOString() };
+      return this.snapshot();
+    }
     if (!this.live()) {
       if (!this.token) {
         throw Object.assign(new Error("На телевизоре сейчас тихо. Запустите Яндекс Музыку в Кинопоиске — пульт подхватит трек."), { statusCode: 503 });
