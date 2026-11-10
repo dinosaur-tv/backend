@@ -10,7 +10,7 @@ export type MusicCommand = {
 };
 
 /** How long a press on the phone outranks what the screen says it is doing. */
-export const PRESS_GRACE_MS = 2500;
+export const PRESS_GRACE_MS = 4000;
 
 function clip(value: string, max = 180) {
   return value.trim().slice(0, max);
@@ -53,7 +53,7 @@ export class MusicDesk {
 
   hearFromTv(value: unknown) {
     let next = heardNowPlaying(value, this.nowPlaying);
-    // A screen reads its player a moment before it learns of a press. For a couple of seconds
+    // A screen reads its player a moment before it learns of a press. For a few seconds
     // after play / pause / volume the phone's choice stands over such a stale report.
     const pressed = this.pending && this.now() - Date.parse(this.pending.at) < PRESS_GRACE_MS ? this.pending : undefined;
     if (next && pressed && this.nowPlaying && next.title === this.nowPlaying.title) {
