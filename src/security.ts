@@ -25,3 +25,10 @@ export function mediaAllowed(id: string, expires: number, signature: string, key
   if (!Number.isSafeInteger(expires) || expires <= now || expires > now + 3_600_000 || !/^[a-f0-9]{64}$/.test(signature)) return false;
   return timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(signMedia(id, expires, key), "hex"));
 }
+
+/** A shared secret compared in constant time; a missing one never matches. */
+export function sameSecret(given: string | undefined, expected: string): boolean {
+  if (!given || !expected) return false;
+  const a = Buffer.from(given), b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}

@@ -22,6 +22,9 @@ const configSchema = z.object({
   TRUST_PROXY: z.string().default(""),
   PERSON_1_NAME: z.string().trim().min(1).max(60).default("Участник 1"),
   PERSON_2_NAME: z.string().trim().min(1).max(60).default("Участник 2"),
+  // DinoOS on the same computer signs its «ТВ» tab in as this person; both empty turns it off.
+  DINOOS_LINK_SECRET: z.union([z.literal(""), z.string().min(32)]).default(""),
+  DINOOS_LINK_USER_ID: z.string().trim().default(""),
 });
 
 export type Config = z.infer<typeof configSchema> & {

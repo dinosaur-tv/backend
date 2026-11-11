@@ -7,14 +7,14 @@ import test from "node:test";
 import { loadConfig } from "./config.js";
 import { createApp } from "./server.js";
 
-function fixture(t: { after: (fn: () => Promise<void>) => void }, remote = "false") {
+function fixture(t: { after: (fn: () => Promise<void>) => void }, remote = "false", extra: Record<string, string> = {}) {
   const dir = mkdtempSync(join(tmpdir(), "dino-api-test-"));
   const config = loadConfig({
     API_DOMAIN: "api.example.test", PUBLIC_BASE_URL: "https://api.example.test",
     MINI_APP_ORIGIN: "https://home.example.test", TELEGRAM_WEB_APP_URL: "https://home.example.test/console/",
     TOKEN_ENCRYPTION_KEY: randomBytes(32).toString("base64"), DEVICE_TOKEN: "d".repeat(40),
     TELEGRAM_WEBHOOK_SECRET: "w".repeat(32), OAUTH_FORWARD_URL: "http://127.0.0.1:8003/api/callback",
-    TELEGRAM_BOT_TOKEN: "test-bot-token", TELEGRAM_ALLOWED_USER_IDS: "1", TV_REMOTE_ENABLED: remote,
+    TELEGRAM_BOT_TOKEN: "test-bot-token", TELEGRAM_ALLOWED_USER_IDS: "1", TV_REMOTE_ENABLED: remote, ...extra,
   });
   const app = createApp(config, dir);
   t.after(async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); });
@@ -78,4 +78,23 @@ test("a Google callback for a neighbouring service is handed over, not read as a
   assert.equal(handed.headers.location, "http://127.0.0.1:8003/api/callback?code=abc&state=6f1b0c2e-1111-4222-8333-444455556666");
   const mine = await app.inject("/oauth/google/callback?code=abc&state=6f1b0c2e-1111-4222-8333-444455556666.token");
   assert.equal(mine.statusCode, 404);
+});
+
+test("DinoOS gets a sign-in code for its owner only with the shared secret", async (t) => {
+  const secret = "s".repeat(40);
+  const { app } = fixture(t, "false", { DINOOS_LINK_SECRET: secret, DINOOS_LINK_USER_ID: "1" });
+  const url = "/v1/internal/dinoos/login-code";
+  assert.equal((await app.inject({ method: "POST", url })).statusCode, 401);
+  assert.equal((await app.inject({ method: "POST", url, headers: { "x-dino-link-secret": "x".repeat(40) } })).statusCode, 401);
+  const issued = await app.inject({ method: "POST", url, headers: { "x-dino-link-secret": secret } });
+  assert.equal(issued.statusCode, 200);
+  const { token } = (await app.inject({ method: "POST", url: "/v1/miniapp/login", payload: { code: issued.json().code } })).json();
+  const homes = await app.inject({ url: "/v1/miniapp/households", headers: { "x-dino-session": token } });
+  assert.notEqual(homes.statusCode, 401, "the code opens a session of the linked person");
+});
+
+test("without a configured link the DinoOS route does not exist", async (t) => {
+  const { app } = fixture(t);
+  const response = await app.inject({ method: "POST", url: "/v1/internal/dinoos/login-code", headers: { "x-dino-link-secret": "s".repeat(40) } });
+  assert.equal(response.statusCode, 404);
 });

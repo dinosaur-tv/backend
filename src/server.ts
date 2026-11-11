@@ -7,7 +7,7 @@ import { z } from "zod";
 import { loadConfig, type Config } from "./config.js";
 import { createHomeApp } from "./home-app.js";
 import { Households, fail, type Access } from "./households.js";
-import { AttemptLimiter, mediaAllowed } from "./security.js";
+import { AttemptLimiter, mediaAllowed, sameSecret } from "./security.js";
 import { parseTelegramUpdate, telegramWebhookReply, verifiedTelegramWebAppUserId } from "./telegram.js";
 import { type Person } from "./types.js";
 
@@ -162,6 +162,14 @@ export function createApp(config: Config, dataDir = join(process.cwd(), "data"))
       fail(429, "Подождите перед следующей попыткой входа");
     }
     return homes.claimLogin(code);
+  });
+  // DinoOS asks for a sign-in code on behalf of its owner and hands it to the console it frames.
+  // Only DinoOS knows the secret, and the reverse proxy keeps this path off the internet too.
+  app.post("/v1/internal/dinoos/login-code", async (request, reply) => {
+    if (!config.DINOOS_LINK_SECRET || !config.DINOOS_LINK_USER_ID) return reply.code(404).send({ error: "Не найдено" });
+    if (!attempts.allow("dinoos-link", 30, 600_000)) return reply.code(429).send({ error: "Слишком много запросов" });
+    if (!sameSecret(first(request.headers["x-dino-link-secret"]), config.DINOOS_LINK_SECRET)) return reply.code(401).send({ error: "Нет доступа" });
+    return homes.issueLoginCode(config.DINOOS_LINK_USER_ID);
   });
   app.post("/v1/miniapp/logout", async (request) => {
     homes.signOut(first(request.headers["x-dino-session"]));
