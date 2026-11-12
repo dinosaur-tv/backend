@@ -14,7 +14,7 @@
     "quality": "npm run check && npm run lint && npm test"
   },
   "dependencies": {
-    "fastify": "^5.2.1",
+    "fastify": "^5.12.8",
     "googleapis": "^188.0.0",
     "zod": "^4.6.2"
   },
